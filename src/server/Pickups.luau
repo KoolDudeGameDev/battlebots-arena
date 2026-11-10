@@ -32,6 +32,9 @@ local zoneCounts: { [string]: { [string]: number } } = {}
 local nextOrbId = 0
 local spawnedBatch = {}
 local collectedBatch = {}
+-- "overworld" normally; "arena" during a boss fight (D81): no orbs, crates or map
+-- coins, refills paused. Health pads and the boss's reward scatter still spawn.
+local mode = "overworld"
 
 local function cellKey(cx: number, cz: number): number
 	return (cx + 1000) * 4096 + (cz + 1000)
@@ -221,7 +224,7 @@ local function buildScrap(kind: string, x: number, z: number, radius: number): M
 end
 
 local function placeCrate(c: Crate)
-	if c.alive then
+	if c.alive or mode ~= "overworld" then
 		return -- already placed (e.g. /chest moved it here before the respawn timer)
 	end
 	local def = defOf(c.kind)
@@ -323,6 +326,59 @@ local function chunked(list, size: number, fn)
 	end
 end
 
+local function fillZones()
+	for zone, targets in Config.OrbTargets do
+		for kind, n in targets do
+			for _ = 1, n do
+				local x, z = Arena.randomPointInZone(zone, rng)
+				spawnOrb(kind, x, z, nil, zone)
+			end
+		end
+	end
+end
+
+local function fillPods()
+	for kind, pod in Config.Pods do
+		for _ = 1, pod.count do
+			local x, z = Arena.randomPointInZone(pod.zones[rng:NextInteger(1, #pod.zones)], rng)
+			spawnOrb(kind, x, z)
+		end
+	end
+end
+
+-- A map swap (D81): everything on the ground goes. Back on the overworld the
+-- zones, pods and crates refill for the new layout.
+function Pickups.setMode(newMode: string)
+	mode = newMode
+	for _, o in orbs do
+		removeOrb(o, 0)
+	end
+	for _, c in Pickups.crates do
+		c.alive = false
+		if c.part then
+			c.part:Destroy()
+			c.part = nil
+		end
+	end
+	if mode == "overworld" then
+		fillZones()
+		fillPods()
+		for _, c in Pickups.crates do
+			placeCrate(c)
+		end
+	end
+end
+
+-- Is there a pod of this kind within r studs of (x, z)? (Arena health pads.)
+function Pickups.hasPodNear(kind: string, x: number, z: number, r: number): boolean
+	for _, o in orbs do
+		if o.kind == kind and (o.x - x) ^ 2 + (o.z - z) ^ 2 <= r * r then
+			return true
+		end
+	end
+	return false
+end
+
 function Pickups.init()
 	for zone in Config.Arena.Zones do
 		zoneCounts[zone] = {}
@@ -350,7 +406,7 @@ function Pickups.init()
 		local C = Config.Coins
 		while true do
 			task.wait(rng:NextNumber(C.mapEvery[1], C.mapEvery[2]))
-			if mapCoins < C.mapMax then
+			if mode == "overworld" and mapCoins < C.mapMax then
 				local x, z = Arena.randomPointInZone(C.zones[rng:NextInteger(1, #C.zones)], rng)
 				Pickups.spawnCoin(x, z, true)
 			end
@@ -358,14 +414,7 @@ function Pickups.init()
 	end)
 
 	-- Fill every zone at boot so the first players see a full arena.
-	for zone, targets in Config.OrbTargets do
-		for kind, n in targets do
-			for _ = 1, n do
-				local x, z = Arena.randomPointInZone(zone, rng)
-				spawnOrb(kind, x, z, nil, zone)
-			end
-		end
-	end
+	fillZones()
 	table.clear(spawnedBatch)
 
 	Remotes.ClientReady.OnServerEvent:Connect(function(player: Player)
@@ -380,15 +429,12 @@ function Pickups.init()
 	end)
 
 	-- Pods: start full, then each kind tops up one pod every `every` seconds.
+	fillPods()
 	for kind, pod in Config.Pods do
-		for _ = 1, pod.count do
-			local x, z = Arena.randomPointInZone(pod.zones[rng:NextInteger(1, #pod.zones)], rng)
-			spawnOrb(kind, x, z)
-		end
 		task.spawn(function()
 			while true do
 				task.wait(pod.every)
-				if (podCounts[kind] or 0) < pod.count then
+				if mode == "overworld" and (podCounts[kind] or 0) < pod.count then
 					local x, z = Arena.randomPointInZone(pod.zones[rng:NextInteger(1, #pod.zones)], rng)
 					spawnOrb(kind, x, z)
 				end
@@ -402,6 +448,9 @@ function Pickups.init()
 		local interval = 1 / Config.OrbRefillPerSecond
 		while true do
 			task.wait(interval)
+			if mode ~= "overworld" then
+				continue
+			end
 			for zone, targets in Config.OrbTargets do
 				for kind, n in targets do
 					if (zoneCounts[zone][kind] or 0) < n then

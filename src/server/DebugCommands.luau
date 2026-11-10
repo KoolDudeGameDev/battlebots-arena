@@ -35,8 +35,9 @@ local HELP = {
 	"/showcase — line up sample robots for a visual check",
 	"/coins 500 — add coins to your save  ·  /resetprofile — back to a new player",
 	"/coin — drop a coin  ·  /chest — move the coin chest in front of you (and refill it)",
-	"/boss inferno | forge | grinder — summon a boss now  ·  /boss — when is the next one",
-	"/killboss — beat the boss (pays rewards, starts its hazard)  ·  /hazard vents | hammers | saws | off",
+	"/boss inferno | forge | grinder — go to that boss's arena now  ·  /boss — flow status",
+	"/killboss — beat the boss (rewards, then its biome)  ·  /hazard on | off — this map's hazard",
+	"/map grassland | forge_highlands | inferno_fields | grinder_scrapyard | arena_forge | arena_inferno | arena_grinder — load a map now",
 }
 
 local function allowed(userId: number): boolean
@@ -190,7 +191,7 @@ handlers["/boss"] = function(e: World.Entity, arg: string?)
 	if not arg then
 		notify(e, Bosses.status())
 	elseif not Bosses.summon(arg) then
-		notify(e, "Bosses: inferno, forge, grinder (one at a time)")
+		notify(e, "Bosses: inferno, forge, grinder (only from the grassland)")
 	end
 end
 
@@ -201,10 +202,16 @@ end
 handlers["/hazard"] = function(e: World.Entity, arg: string?)
 	if arg == "off" then
 		Bosses.stopHazard()
-	elseif arg and Config.Hazards[arg] then
-		Bosses.startHazard(arg)
+	elseif arg == "on" then
+		notify(e, Bosses.startMapHazard() or "This map has no hazard")
 	else
-		notify(e, "Hazards: vents, hammers, saws, off")
+		notify(e, "/hazard on | off")
+	end
+end
+
+handlers["/map"] = function(e: World.Entity, arg: string?)
+	if not arg or not Bosses.debugLoad(arg) then
+		notify(e, "Maps: grassland, forge_highlands, inferno_fields, grinder_scrapyard, arena_forge, arena_inferno, arena_grinder")
 	end
 end
 

@@ -349,7 +349,8 @@ Config.Maps = {
 }
 
 -- Arena hazards a boss leaves behind (D39). Cycles repeat; each spot starts at its
--- own offset so they don't all fire together.
+-- own offset so they don't all fire together. Since D81 their positions come from
+-- the map (MapLayouts vents, hammers, saws); ring, side and reach below are unused.
 Config.Hazards = {
 	vents = {
 		name = "Flame Vents",

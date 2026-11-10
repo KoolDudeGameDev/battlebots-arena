@@ -11,6 +11,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 local XpCurve = require(Shared.XpCurve)
+local MapQuery = require(Shared.MapQuery)
 local Upgrades = require(Shared.Upgrades)
 local OfferGenerator = require(Shared.OfferGenerator)
 local Combat2D = require(Shared.Combat2D)
@@ -243,27 +244,50 @@ function Match.setChassis(e: World.Entity, chassisId: string)
 	return true
 end
 
--- Spawns (or respawns) a player at Level 0 in the outer zone.
-local function spawnPlayer(e: World.Entity)
+-- Spawn protection: a few seconds where nothing can hurt the robot.
+local function protect(e: World.Entity)
+	local gen = e.generation
+	e.protectedUntil = now() + Config.Combat.SpawnProtection
+	if e.model then
+		e.model:SetAttribute("Protected", true)
+	end
+	task.delay(Config.Combat.SpawnProtection, function()
+		if e.generation == gen and e.model then
+			e.model:SetAttribute("Protected", false)
+		end
+	end)
+end
+
+-- Spawns (or respawns) a player at Level 0 at a spawn point of the current map.
+-- keep = true (dying in a boss arena, Q2): same robot, level and build, full HP.
+local function spawnPlayer(e: World.Entity, keep: boolean?)
 	local player = e.player :: Player
 	e.generation += 1
 	local gen = e.generation
 	e.alive = false
-	e.level, e.xp, e.totalXp, e.score = 0, 0, 0, 0
-	-- The robot equipped in the Garage drives from each new spawn (D73).
-	local saved = Profiles.data(player)
-	if saved then
-		e.chassisId = saved.equipped
+	if keep then
+		e.build.small = false -- a Bomber comes back big
+		e.stats = Stats.compute(Config, e.build, e.level)
+		e.visualScale = Stats.visualScale(Config, e.level) * Stats.bodySize(e.build)
+	else
+		e.level, e.xp, e.totalXp, e.score = 0, 0, 0, 0
+		-- The robot equipped in the Garage drives from each new spawn (D73).
+		local saved = Profiles.data(player)
+		if saved then
+			e.chassisId = saved.equipped
+		end
+		e.build = emptyBuild(e.chassisId)
+		e.stats = Stats.compute(Config, e.build, 0)
+		e.visualScale = Stats.visualScale(Config, 0) * Stats.bodySize(e.build)
 	end
-	e.build = emptyBuild(e.chassisId)
-	e.stats = Stats.compute(Config, e.build, 0)
-	e.visualScale = Stats.visualScale(Config, 0) * Stats.bodySize(e.build)
 	e.hp = e.stats.maxHp
 	e.armor, e.tempArmor, e.tempArmorUntil = 0, 0, 0
 	e.regenUntil, e.regenRate = 0, 0
 	e.bonusHp, e.bonusHpUntil = 0, 0
 	e.burnUntil, e.burnAcc, e.burnSourceId = 0, 0, nil
-	e.offer, e.pendingOffers = nil, 0
+	if not keep then
+		e.offer, e.pendingOffers = nil, 0
+	end
 	e.nextFire = {}
 	e.firing = false
 	e.shieldUntil, e.skillReadyAt = 0, 0
@@ -293,20 +317,19 @@ local function spawnPlayer(e: World.Entity)
 	local y = Config.Robot.HipHeight + Config.Robot.RootSize[2] / 2
 	model:PivotTo(CFrame.new(x, y, z))
 	local color = randomColor(e.rng)
-	RobotBuilder.dress(model, e.build, color, 1, e.chassisId, 0)
+	RobotBuilder.dress(model, e.build, color, if keep then e.visualScale else 1, e.chassisId, if keep then e.level else 0)
 	setupModel(e, model, color)
+	if keep then
+		model:SetAttribute("VisualScale", e.visualScale)
+		e.hp = e.stats.maxHp
+		Combat.syncHp(e)
+	end
 
 	pcall(function()
 		(model.PrimaryPart :: BasePart):SetNetworkOwner(player)
 	end)
 	e.lastValidPos = Vector3.new(x, y, z)
-	e.protectedUntil = now() + Config.Combat.SpawnProtection
-	model:SetAttribute("Protected", true)
-	task.delay(Config.Combat.SpawnProtection, function()
-		if e.generation == gen and e.model then
-			e.model:SetAttribute("Protected", false)
-		end
-	end)
+	protect(e)
 	e.alive = true
 	markDirty(e)
 end
@@ -469,6 +492,32 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 		return
 	end
 
+	-- Dying in a boss arena (Q2): keep your level and build, lose a quarter of the XP
+	-- toward your next level, drop nothing, and come back in the arena.
+	if Arena.isArena() and victim.player then
+		local lost = math.min(victim.xp, math.floor(Config.Maps.arenaDeath.xpLoss * XpCurve.toNext(victim.level)))
+		victim.xp -= lost
+		victim.totalXp = math.max(0, victim.totalXp - lost)
+		Remotes.KillFeed:FireAllClients(killerName, victim.name, victim.level)
+		local arenaPlayer = victim.player :: Player
+		Remotes.Death:FireClient(arenaPlayer, {
+			killerName = killerName,
+			killerLevel = if killer then killer.level else 0,
+			level = victim.level,
+			score = victim.score,
+			respawnAt = now() + Config.Maps.arenaDeath.respawn,
+			keepsLevel = true,
+		})
+		markDirty(victim)
+		local arenaGen = victim.generation
+		task.delay(Config.Maps.arenaDeath.respawn, function()
+			if World.byPlayer[arenaPlayer] == victim and victim.generation == arenaGen then
+				spawnPlayer(victim, Arena.isArena()) -- the fight may have ended meanwhile
+			end
+		end)
+		return
+	end
+
 	local count, value = Combat2D.deathSpill(victim.totalXp, victim.level, Config.Death.SpillFraction)
 	if count > 0 then
 		Pickups.spill(x, z, count, value)
@@ -495,6 +544,24 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 			spawnPlayer(victim)
 		end
 	end)
+end
+
+-- A map swap (D81): every living robot (players and dummies) moves to a spawn point
+-- of the new map, spread out from each other, with fresh spawn protection.
+function Match.placeEveryone(rng: Random)
+	local placed: { { number } } = {}
+	local map = Arena.map()
+	local y = Config.Robot.HipHeight + Config.Robot.RootSize[2] / 2
+	for _, e in World.entities do
+		if e.alive and e.model and not e.isBoss then
+			local x, z = MapQuery.pickSpawn(map, placed, Config.Arena.SpawnMinEnemyDistance, rng:NextInteger(1, #map.spawns))
+			table.insert(placed, { x, z })
+			e.model:PivotTo(CFrame.new(x, y, z))
+			e.lastValidPos = Vector3.new(x, y, z)
+			e.pushGrantAt = -math.huge
+			protect(e)
+		end
+	end
 end
 
 export type DummyOptions = {

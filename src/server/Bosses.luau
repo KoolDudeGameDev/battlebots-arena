@@ -1,9 +1,11 @@
--- Bosses and arena hazards (Phase 4b, D39, D74).
--- Every 7-10 min with at least 2 players, a 20 s warning, then one of three
--- giant bosses hunts the nearest robot. Everyone who damaged it gets the same
--- 60 coins and 600 XP when it falls, more scatters on the ground, and the boss
--- leaves its hazard on the arena for 6 min. It leaves after 4 min if nobody
--- beats it. Timing rules live in shared/HazardTiming.luau (tested).
+-- Bosses, the map flow and hazards (Phase 4b D39/D74, maps D79/D81).
+-- Every 7-10 min of grassland time with at least 2 players, a 20 s warning, then
+-- everyone is moved to the boss's own arena (a fade and a map swap). There it hunts
+-- the nearest robot; PvP is off. Everyone who damaged it gets the same 60 coins
+-- and 600 XP when it falls, more scatters on the ground, and 6 s later the
+-- overworld comes back as the boss's biome with its hazard built in, for 6 min.
+-- If nobody beats it in 4 min it leaves and everyone goes home. The phase logic
+-- lives in shared/MapFlow.luau, timings in shared/HazardTiming.luau (both tested).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -15,6 +17,7 @@ local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 local Combat2D = require(Shared.Combat2D)
 local HazardTiming = require(Shared.HazardTiming)
+local MapFlow = require(Shared.MapFlow)
 local World = require(script.Parent.World)
 local Arena = require(script.Parent.Arena)
 local Pickups = require(script.Parent.Pickups)
@@ -50,7 +53,7 @@ type Active = {
 	chargeHit: { [number]: boolean },
 }
 local active: Active? = nil
-local warningUntil = 0
+local flow: MapFlow.State = MapFlow.new(Config, 0, 0.5) -- replaced in init
 
 local function aliveRobots(): { World.Entity }
 	local out = {}
@@ -185,14 +188,15 @@ local function removeBoss(a: Active)
 	end
 end
 
-local scheduleNext: () -> ()
-
-function Bosses.summon(key: string)
+-- The boss walks out of its arena's gate (called after the swap to the arena).
+local function spawnArenaBoss(key: string)
 	local def = B.list[key]
-	if not def or active then
-		return false
+	local gate = Arena.map().gate
+	local x, z = 0, 0
+	if gate then
+		local d = math.sqrt(gate.x ^ 2 + gate.z ^ 2)
+		x, z = gate.x * (1 - 18 / d), gate.z * (1 - 18 / d) -- just inside the doorway
 	end
-	local x, z = 0, 0 -- the centre of the plaza
 	local hp = HazardTiming.bossHp(B, #Players:GetPlayers())
 	local e = Match.spawnBoss(def, x, z, hp)
 	active = {
@@ -205,7 +209,15 @@ function Bosses.summon(key: string)
 		chargeDir = nil,
 		chargeHit = {},
 	}
-	announce(`{def.name} has entered the arena! Everyone who hits it shares the reward.`)
+	announce(`{def.name} is here! Everyone who hits it shares the reward.`)
+end
+
+-- Debug (/boss key): skip the timer and the warning; the swap starts next frame.
+function Bosses.summon(key: string): boolean
+	if not B.list[key] or (flow.phase ~= "grassland" and flow.phase ~= "warning") then
+		return false
+	end
+	flow = { phase = "warning", map = "grassland", boss = key, lastBoss = flow.lastBoss, endsAt = now(), nextBossAt = math.huge }
 	return true
 end
 
@@ -231,8 +243,9 @@ function Bosses.died(e: World.Entity, x: number, z: number)
 	Pickups.spill(x, z, B.reward.scatterOrbs, B.reward.scatterOrbValue)
 	announce(`{a.def.name} destroyed! {paid} player{if paid == 1 then "" else "s"} earned {B.reward.coins} coins and {B.reward.xp} XP.`)
 	active = nil
-	Bosses.startHazard(a.def.hazard)
-	scheduleNext()
+	Bosses.stopHazard()
+	flow = MapFlow.defeated(Config, flow, now())
+	Bosses.publish()
 end
 
 -- Debug (/killboss): beats the boss as if `by` landed the last hit.
@@ -258,12 +271,6 @@ local function tickBoss(dt: number)
 		return
 	end
 	local t = now()
-	if t - a.spawnedAt >= B.despawnAfter then
-		announce(`{a.def.name} got bored and left. No reward this time.`)
-		removeBoss(a)
-		scheduleNext()
-		return
-	end
 	local atk = a.def.attack
 	local x, z = World.position(e)
 
@@ -329,7 +336,7 @@ end
 -- Hazards ----------------------------------------------------------------------
 
 type Spot = { x: number, z: number, offset: number, parts: { [string]: BasePart }, last: string, hitAt: { [number]: number }, track: { number }? }
-local hazard: { kind: string, startedAt: number, untilT: number, spots: { Spot }, folder: Folder }? = nil
+local hazard: { kind: string, startedAt: number, spots: { Spot }, folder: Folder }? = nil
 
 local function part(folder: Instance, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material, shape: Enum.PartType?): Part
 	local p = Instance.new("Part")
@@ -351,15 +358,6 @@ end
 
 local UPRIGHT = CFrame.Angles(0, 0, math.rad(90)) -- a cylinder standing up
 
-local function ringPoints(radius: number, startDeg: number): { { number } }
-	local out = {}
-	for k = 0, 7 do
-		local ang = math.rad(startDeg + k * 45)
-		table.insert(out, { math.cos(ang) * radius, math.sin(ang) * radius })
-	end
-	return out
-end
-
 function Bosses.stopHazard()
 	if hazard then
 		hazard.folder:Destroy()
@@ -376,31 +374,26 @@ function Bosses.startHazard(kind: string)
 	local folder = Instance.new("Folder")
 	folder.Name = "Hazard"
 	local spots: { Spot } = {}
+	local map = Arena.map()
 	if kind == "vents" then
-		for i, p in ringPoints(def.ring, 22.5) do
-			local s: Spot = { x = p[1], z = p[2], offset = i * 0.75, parts = {}, last = "", hitAt = {} }
+		for i, p in map.vents do
+			local s: Spot = { x = p.x, z = p.z, offset = i * 0.75, parts = {}, last = "", hitAt = {} }
 			s.parts.grate = part(folder, "Vent", Vector3.new(0.4, def.radius * 2, def.radius * 2), CFrame.new(s.x, 0.2, s.z) * UPRIGHT, Color3.fromRGB(50, 50, 55), Enum.Material.DiamondPlate, Enum.PartType.Cylinder)
 			s.parts.fire = part(folder, "VentFire", Vector3.new(10, def.radius * 1.6, def.radius * 1.6), CFrame.new(s.x, 5, s.z) * UPRIGHT, Color3.fromRGB(255, 120, 30), Enum.Material.Neon, Enum.PartType.Cylinder)
 			s.parts.fire.Transparency = 1
 			table.insert(spots, s)
 		end
 	elseif kind == "hammers" then
-		for i, p in ringPoints(def.ring, 0) do
-			local s: Spot = { x = p[1], z = p[2], offset = i * 0.7, parts = {}, last = "", hitAt = {} }
+		for i, p in map.hammers do
+			local s: Spot = { x = p.x, z = p.z, offset = i * 0.7, parts = {}, last = "", hitAt = {} }
 			s.parts.mark = part(folder, "HammerMark", Vector3.new(0.2, def.radius * 2, def.radius * 2), CFrame.new(s.x, 0.15, s.z) * UPRIGHT, Color3.fromRGB(200, 60, 50), Enum.Material.Neon, Enum.PartType.Cylinder)
 			s.parts.mark.Transparency = 0.7
 			s.parts.head = part(folder, "HammerHead", Vector3.new(def.radius * 1.4, 4, def.radius * 1.4), CFrame.new(s.x, 18, s.z), Color3.fromRGB(70, 74, 82), Enum.Material.Metal)
 			table.insert(spots, s)
 		end
 	elseif kind == "saws" then
-		for k = 0, 3 do
-			local ang = k * math.pi / 2
-			local c, sn = math.cos(ang), math.sin(ang)
-			local function turn(px: number, pz: number): (number, number)
-				return px * c - pz * sn, px * sn + pz * c
-			end
-			local x1, z1 = turn(-def.reach, def.side)
-			local x2, z2 = turn(def.reach, def.side)
+		for k, run in map.saws do
+			local x1, z1, x2, z2 = run.x1, run.z1, run.x2, run.z2
 			local s: Spot = { x = x1, z = z1, offset = k * 2, parts = {}, last = "", hitAt = {}, track = { x1, z1, x2, z2 } }
 			local len = math.sqrt((x2 - x1) ^ 2 + (z2 - z1) ^ 2)
 			part(folder, "SawTrack", Vector3.new(len, 0.15, 1.2), CFrame.lookAt(Vector3.new((x1 + x2) / 2, 0.08, (z1 + z2) / 2), Vector3.new(x2, 0.08, z2)) * CFrame.Angles(0, math.rad(90), 0), Color3.fromRGB(60, 60, 66), Enum.Material.Metal)
@@ -410,8 +403,21 @@ function Bosses.startHazard(kind: string)
 	end
 	folder.Parent = Workspace
 	local t = now()
-	hazard = { kind = kind, startedAt = t, untilT = t + B.hazardDuration, spots = spots, folder = folder }
-	announce(`{def.name} are active for {math.floor(B.hazardDuration / 60)} minutes. Watch your step!`)
+	hazard = { kind = kind, startedAt = t, spots = spots, folder = folder }
+end
+
+-- The current map's own hazard, from its anchors (vents, hammers or saw runs).
+-- Returns the hazard's name, or nil when the map has none.
+function Bosses.startMapHazard(): string?
+	local map = Arena.map()
+	for _, kind in { "vents", "hammers", "saws" } do
+		if #map[kind] > 0 then
+			Bosses.startHazard(kind)
+			return H[kind].name
+		end
+	end
+	Bosses.stopHazard()
+	return nil
 end
 
 local function robotsNear(x: number, z: number, radius: number): { World.Entity }
@@ -431,11 +437,6 @@ local function tickHazard()
 		return
 	end
 	local t = now()
-	if t >= hz.untilT then
-		Bosses.stopHazard()
-		announce("The arena is calm again.")
-		return
-	end
 	local def = H[hz.kind]
 	local elapsed = t - hz.startedAt
 	for _, s in hz.spots do
@@ -495,48 +496,124 @@ local function tickHazard()
 	end
 end
 
--- Schedule -------------------------------------------------------------------
+-- The map flow ----------------------------------------------------------------
 
-local nextBossAt = math.huge
+local swapping = false
+local nextPadAt = 0
 
-scheduleNext = function()
-	nextBossAt = now() + rng:NextNumber(B.every[1], B.every[2])
+-- Workspace attributes the HUD reads: the phase and when it ends (server time).
+function Bosses.publish()
+	Workspace:SetAttribute("MapPhase", flow.phase)
+	Workspace:SetAttribute("MapEndsAt", if flow.endsAt == math.huge then 0 else flow.endsAt)
+	Workspace:SetAttribute("MapBoss", if flow.boss then B.list[flow.boss].name else "")
+end
+
+-- Fade everyone out, swap the map under them, place them on it, fade back in.
+local function swapTo(name: string, after: (() -> ())?)
+	swapping = true
+	local c = Config.Maps.fadeColor[name]
+	Remotes.MapSwap:FireAllClients(Color3.fromRGB(c[1], c[2], c[3]))
+	task.delay(Config.Maps.fade, function()
+		Bosses.stopHazard()
+		Combat.clearAll()
+		Arena.load(name)
+		Pickups.setMode(if Arena.isArena() then "arena" else "overworld")
+		Match.placeEveryone(rng)
+		nextPadAt = 0
+		swapping = false
+		if after then
+			after()
+		end
+	end)
+end
+
+local function onEvent(ev: string)
+	local boss = flow.boss
+	local def = if boss then B.list[boss] else nil
+	if ev == "warning" and def then
+		announce(`{def.name} approaches! Everyone goes to its lair in {B.warning} seconds.`)
+	elseif ev == "arena" and boss then
+		swapTo(flow.map, function()
+			spawnArenaBoss(boss)
+			Bosses.startMapHazard()
+		end)
+	elseif ev == "escape" then
+		local a = active
+		if a then
+			announce(`{a.def.name} got bored and left. No reward this time.`)
+			removeBoss(a)
+		end
+		swapTo("grassland")
+	elseif ev == "biome" then
+		swapTo(flow.map, function()
+			local name = Bosses.startMapHazard()
+			announce(`{Arena.map().displayName}! {name or "Hazards"} for {math.floor(B.hazardDuration / 60)} minutes. Watch your step!`)
+		end)
+	elseif ev == "revert" then
+		announce(`{Arena.map().displayName} fades in {Config.Maps.revertWarning} seconds.`)
+	elseif ev == "grassland" then
+		swapTo("grassland", function()
+			announce("The arena is calm again.")
+		end)
+	end
+	Bosses.publish()
+end
+
+-- Arena health pads: a Health Pod reappears on each empty pad every pads.every s.
+local function tickPads(t: number)
+	if swapping or not Arena.isArena() or t < nextPadAt then
+		return
+	end
+	nextPadAt = t + Config.Maps.pads.every
+	for _, p in Arena.map().pads do
+		if not Pickups.hasPodNear("health", p.x, p.z, 4) then
+			Pickups.spawnPod("health", p.x, p.z)
+		end
+	end
 end
 
 function Bosses.status(): string
-	if active then
-		return `{active.def.name} is in the arena ({math.floor(active.e.hp)} HP).`
+	local a = active
+	if a then
+		return `{a.def.name} is in its arena ({math.floor(a.e.hp)} HP).`
 	end
-	return `Next boss in about {math.max(0, math.floor((nextBossAt - now()) / 60 + 0.5))} min (needs {B.minPlayers}+ players).`
+	if flow.phase == "grassland" then
+		return `Next boss in about {math.max(0, math.floor((flow.nextBossAt - now()) / 60 + 0.5))} min (needs {B.minPlayers}+ players).`
+	end
+	return `{flow.phase}: {math.max(0, math.floor(flow.endsAt - now()))} s left on {flow.map}.`
+end
+
+-- Debug (/map name): load any map now, outside the flow. Returns false if unknown.
+function Bosses.debugLoad(name: string): boolean
+	if not Config.Maps.fadeColor[name] then
+		return false
+	end
+	swapTo(name, function()
+		Bosses.startMapHazard()
+	end)
+	return true
 end
 
 function Bosses.init()
-	scheduleNext()
+	flow = MapFlow.new(Config, now(), rng:NextNumber())
+	Bosses.publish()
 	World.hooks.bossDied = Bosses.died
 	RunService.Heartbeat:Connect(function(dt)
 		local ok, err = pcall(function()
 			tickBoss(dt)
 			tickHazard()
+			local t = now()
+			tickPads(t)
+			if not swapping then
+				local s, ev = MapFlow.tick(Config, flow, t, #Players:GetPlayers(), rng:NextNumber())
+				flow = s
+				if ev then
+					onEvent(ev)
+				end
+			end
 		end)
 		if not ok then
 			warn("[Bosses]", err)
-		end
-		local t = now()
-		if not active and warningUntil == 0 and t >= nextBossAt then
-			if #Players:GetPlayers() >= B.minPlayers then
-				warningUntil = t + B.warning
-				announce(`A boss is coming in {B.warning} seconds!`)
-			else
-				scheduleNext() -- not enough players: try again later
-			end
-		elseif warningUntil > 0 and t >= warningUntil then
-			warningUntil = 0
-			local keys = {}
-			for key in B.list do
-				table.insert(keys, key)
-			end
-			table.sort(keys)
-			Bosses.summon(keys[rng:NextInteger(1, #keys)])
 		end
 	end)
 end

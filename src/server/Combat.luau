@@ -353,6 +353,10 @@ function Combat.damage(target: World.Entity, amount: number, attacker: World.Ent
 	if not target.alive or target.god or t < target.protectedUntil then
 		return
 	end
+	-- Boss arenas are co-op (Q1): players can't hurt each other there.
+	if attacker and attacker ~= target and attacker.player and target.player and Arena.isArena() then
+		return
+	end
 	if t < target.shieldUntil then
 		if not splash then
 			return
@@ -1080,7 +1084,9 @@ local function stepProjectiles(dt: number, fields: { any })
 			local hx, hz = x1 + (x2 - x1) * bestT, z1 + (z2 - z1) * bestT
 			endProjectile(i, p, true)
 			if hitBody and p.net then
-				Combat.applyNet(hitBody.e, hx, hz)
+				if not (Arena.isArena() and hitBody.e.player and owner and owner.player) then -- co-op arena: no nets on players
+					Combat.applyNet(hitBody.e, hx, hz)
+				end
 			elseif hitBody then
 				Combat.damage(hitBody.e, p.damage, owner, false, hx, hz)
 				if p.splashRadius then
@@ -1344,6 +1350,22 @@ local function tickSustain(e: World.Entity, t: number, dt: number)
 end
 
 -- Boot ------------------------------------------------------------------------
+
+-- A map swap (D81): every shot, Earth Wall and Spike Trap on the old map goes.
+function Combat.clearAll()
+	for i = #projectiles, 1, -1 do
+		endProjectile(i, projectiles[i], true)
+	end
+	for i = #walls, 1, -1 do
+		destroyWall(walls[i])
+	end
+	for _, tr in traps do
+		if tr.part then
+			tr.part:Destroy()
+		end
+	end
+	table.clear(traps)
+end
 
 function Combat.init()
 	wallFolder = Instance.new("Folder")
