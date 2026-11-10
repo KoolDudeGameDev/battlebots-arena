@@ -1,0 +1,75 @@
+-- Two views (D37): the default third-person camera behind the robot that turns
+-- with ClientState.camYaw, and the fixed top-down camera (about 66 degrees of tilt). Both follow your robot, hold on the death point, snap to
+-- a new robot, and shake when you are hit.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local ClientState = require(script.Parent.ClientState)
+
+local CameraController = {}
+
+local player = Players.LocalPlayer
+local C = Config.Camera
+local THIRD_BACK = 16
+local THIRD_UP = 8
+local THIRD_LOOK_AHEAD = 30
+local trauma = 0
+
+function CameraController.shake(amount: number)
+	trauma = math.min(1, trauma + amount)
+end
+
+function CameraController.init()
+	local focus = Vector3.zero
+	local lastCharacter: Model? = nil
+	local rng = Random.new()
+
+	RunService:BindToRenderStep("BattleCamera", Enum.RenderPriority.Camera.Value + 1, function(dt)
+		local cam = Workspace.CurrentCamera
+		if not cam then
+			return
+		end
+		cam.CameraType = Enum.CameraType.Scriptable
+
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local scale = 1
+		if root then
+			local p = root.Position
+			local target = Vector3.new(p.X, 0, p.Z)
+			scale = (character :: Model):GetAttribute("VisualScale") or 1
+			if character ~= lastCharacter then
+				lastCharacter = character
+				focus = target -- snap on respawn
+				local look = root.CFrame.LookVector
+				ClientState.camYaw = math.atan2(look.Z, look.X) -- start behind the new robot
+			else
+				local alpha = 1 - (1 - C.Lerp) ^ (dt * 60)
+				focus = focus:Lerp(target, alpha)
+			end
+		end
+
+		trauma = math.max(0, trauma - dt * 1.8)
+		local s = trauma * trauma * 1.5
+		local offset = Vector3.new(rng:NextNumber(-s, s), 0, rng:NextNumber(-s, s))
+
+		if ClientState.camMode == "third" then
+			cam.FieldOfView = 70
+			local yaw = ClientState.camYaw
+			local dir = Vector3.new(math.cos(yaw), 0, math.sin(yaw))
+			local base = focus + Vector3.new(0, 3 * scale, 0) + offset
+			local eye = base - dir * THIRD_BACK * scale + Vector3.new(0, THIRD_UP * scale, 0)
+			cam.CFrame = CFrame.lookAt(eye, base + dir * THIRD_LOOK_AHEAD)
+		else
+			cam.FieldOfView = C.Fov
+			local look = focus + offset
+			cam.CFrame = CFrame.lookAt(look + Vector3.new(0, C.Height, C.Back), look)
+		end
+	end)
+end
+
+return CameraController
