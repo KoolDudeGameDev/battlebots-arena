@@ -18,6 +18,7 @@ local Remotes = require(Shared.Remotes)
 local Combat2D = require(Shared.Combat2D)
 local HazardTiming = require(Shared.HazardTiming)
 local MapFlow = require(Shared.MapFlow)
+local MapQuery = require(Shared.MapQuery)
 local World = require(script.Parent.World)
 local Arena = require(script.Parent.Arena)
 local Pickups = require(script.Parent.Pickups)
@@ -260,6 +261,33 @@ function Bosses.killActive(by: World.Entity?)
 	end
 end
 
+-- In its arena a boss walks through destructible cover and smashes it (D79, Q5).
+local function smashCover(e: World.Entity)
+	local map = Arena.map()
+	if map.kind ~= "arena" then
+		return
+	end
+	local x, z = World.position(e)
+	local r = World.hitRadius(e, Config)
+	local function debris(kind: string, cx: number?, cz: number?, size: number)
+		if cx and cz then
+			Remotes.Effect:FireAllClients(if kind == "stone" or kind == "obsidian" then "wall" else "crate", cx, cz, size)
+		end
+	end
+	for _, b in map.boxes do
+		if b.d and not Arena.broken[b.id] and MapQuery.touchesBox(b, x, z, r) then
+			local cx, cz = Arena.breakPiece("box", b.id)
+			debris(b.kind, cx, cz, math.max(b.hu, b.hv))
+		end
+	end
+	for _, c in map.circles do
+		if c.d and not Arena.broken[MapQuery.CIRCLE_KEY + c.id] and (c.x - x) ^ 2 + (c.z - z) ^ 2 <= (c.r + r) ^ 2 then
+			local cx, cz = Arena.breakPiece("circle", c.id)
+			debris(c.kind, cx, cz, c.r)
+		end
+	end
+end
+
 local function tickBoss(dt: number)
 	local a = active
 	if not a then
@@ -272,6 +300,7 @@ local function tickBoss(dt: number)
 	end
 	local t = now()
 	local atk = a.def.attack
+	smashCover(e)
 	local x, z = World.position(e)
 
 	-- Charging (Grinder): straight line, hurting each robot once.

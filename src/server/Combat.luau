@@ -12,6 +12,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 local Combat2D = require(Shared.Combat2D)
+local MapQuery = require(Shared.MapQuery)
 local Damage = require(Shared.Damage)
 local Stats = require(Shared.Stats)
 local Chassis = require(Shared.Chassis)
@@ -1440,6 +1441,16 @@ function Combat.init()
 				end
 				local netted = if e.netUntil > 0 then Config.Weapons.netgun.netSlow else 1
 				local slow = if t < e.rootedUntil then 0 else math.min(netted, Combat2D.fieldFactor(x, z, e.id, fields, Config.Skills.skl_nullfield.robotSlow))
+				-- Lava (Q3): burns at lava.dps and slows while inside, then a short burn after.
+				local L = Config.Maps.lava
+				if not e.isBoss and MapQuery.inLava(Arena.map(), x, z) then
+					slow *= L.slow
+					e.inLava = true
+					e.burnDps, e.burnUntil, e.burnSourceId = L.dps, t + 0.3, nil
+				elseif e.inLava then
+					e.inLava = false
+					e.burnDps, e.burnUntil = L.burnDps, t + L.burnDuration
+				end
 				if slow ~= e.slowFactor then
 					e.slowFactor = slow
 					Combat.applyWalkSpeed(e)

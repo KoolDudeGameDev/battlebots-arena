@@ -30,6 +30,7 @@ export type Entity = {
 	burnDps: number,
 	burnSourceId: number?,
 	burnAcc: number,
+	inLava: boolean?, -- standing in a LavaZone (D81)
 	pushGrantAt: number, -- last knockback, so Guard allows the movement
 	pushRoom: number,
 	chassisId: string, -- which robot (Chassis.luau)
