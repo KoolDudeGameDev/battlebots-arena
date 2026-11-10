@@ -28,6 +28,7 @@ World.hooks.refreshStats = Match.refreshStats
 World.hooks.spawnDummy = Match.spawnDummy
 World.hooks.consumeDash = Combat.consumeDash
 World.hooks.applyPod = Combat.applyPod
+World.hooks.syncHp = Combat.syncHp
 World.hooks.spawnPod = Pickups.spawnPod
 World.hooks.setSmall = Match.setSmall
 World.hooks.addCoins = function(e, amount)

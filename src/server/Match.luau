@@ -470,8 +470,10 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 	Remotes.Effect:FireAllClients("death", x, z, 6 * victim.stats.scale)
 
 	local killerName = "the arena"
-	if killer and killer ~= victim and killer.player then
+	if killer and killer ~= victim then
 		killerName = killer.name
+	end
+	if killer and killer ~= victim and killer.player then
 		Match.addXp(killer, Combat2D.killReward(victim.totalXp, victim.level, killer.level, Config.Death.KillShare, Config.Death.KillMinimum), "kill")
 	end
 

@@ -311,6 +311,7 @@ local function collectFor(e: World.Entity)
 						World.hooks.addXp(e, o.value, "orb")
 						if (e.build.stacks.mod_scavenger or 0) > 0 then
 							e.hp = math.min(e.stats.maxHp, e.hp + Config.Orbs[o.kind].heal)
+							World.hooks.syncHp(e)
 							World.hooks.markDirty(e)
 						end
 					end

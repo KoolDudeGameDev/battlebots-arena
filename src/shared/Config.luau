@@ -18,7 +18,7 @@ Config.Arena = {
 		middle = { min = 80, max = 135 },
 		centre = { min = 0, max = 80 }, -- the dirt plaza
 	},
-	-- Walls, pillars, trees and rocks: see MapLayout.luau.
+	-- Cover, spawns and hazards per map: see MapLayouts.luau (generated, D81).
 	SpawnMinEnemyDistance = 40,
 	SpawnTries = 20,
 }

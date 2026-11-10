@@ -1061,7 +1061,7 @@ local function stepProjectiles(dt: number, fields: { any })
 		-- Robots: a piercing railgun shot hits every robot before the first solid thing.
 		local hitBody: Body? = nil
 		for _, b in bodies do
-			if b.e.id == p.ownerId or b.e.id == p.skipEntity or t < b.e.protectedUntil then
+			if b.e.id == p.ownerId or b.e.id == p.skipEntity or t < b.e.protectedUntil or not b.e.alive then
 				continue
 			end
 			if p.hitIds and p.hitIds[b.e.id] then
@@ -1085,7 +1085,8 @@ local function stepProjectiles(dt: number, fields: { any })
 			local hx, hz = x1 + (x2 - x1) * bestT, z1 + (z2 - z1) * bestT
 			endProjectile(i, p, true)
 			if hitBody and p.net then
-				if not (Arena.isArena() and hitBody.e.player and owner and owner.player) then -- co-op arena: no nets on players
+				local shielded = t < hitBody.e.shieldUntil or hitBody.e.god
+				if not shielded and not (Arena.isArena() and hitBody.e.player and owner and owner.player) then -- co-op arena: no nets on players
 					Combat.applyNet(hitBody.e, hx, hz)
 				end
 			elseif hitBody then
@@ -1183,8 +1184,8 @@ end
 local function useSkill(e: World.Entity)
 	local t = now()
 	local skill = e.build.skill
-	if not e.alive or not skill then
-		return
+	if not e.alive or not skill or t < e.stunnedUntil then
+		return -- flipped robots can't act (D72)
 	end
 	if skill == "skl_dash" then
 		if t - e.dashGrantAt < Config.AntiCheat.DashWindow then
@@ -1225,7 +1226,7 @@ local function useSkill(e: World.Entity)
 		for _, tg in targets(e.id, false) do
 			local v = tg.e
 			-- Bosses are far too heavy to flip (D78).
-			if v and not v.isBoss and Combat2D.inArc(x, z, e.aim, half, reach, tg.x, tg.z, tg.r) then
+			if v and not v.isBoss and t >= v.stunnedUntil and Combat2D.inArc(x, z, e.aim, half, reach, tg.x, tg.z, tg.r) then
 				v.rootedUntil = math.max(v.rootedUntil, t + flipTime)
 				v.stunnedUntil = math.max(v.stunnedUntil, t + flipTime)
 				knock(v, x, z, S.knockback, flipTime)

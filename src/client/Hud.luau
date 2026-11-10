@@ -806,7 +806,12 @@ local function perFrame()
 	end
 end
 
+local lastSkill: string? = nil
 local function onState(s)
+	if s.skill ~= lastSkill then
+		ClientState.localSkillReadyAt = 0 -- a new skill has no cooldown yet
+		lastSkill = s.skill
+	end
 	ClientState.state = s
 	updateWallet(s.coins or 0)
 	if ClientState.actions.garageRefresh then

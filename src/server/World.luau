@@ -109,6 +109,7 @@ World.hooks = {} :: {
 	setSmall: (e: Entity, small: boolean) -> (),
 	addCoins: (e: Entity, amount: number) -> (),
 	bossDied: (e: Entity, x: number, z: number) -> (),
+	syncHp: (e: Entity) -> (),
 }
 
 return World
