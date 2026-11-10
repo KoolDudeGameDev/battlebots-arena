@@ -12,7 +12,6 @@ local Config = require(Shared.Config)
 local Combat2D = require(Shared.Combat2D)
 local MapLayouts = require(Shared.MapLayouts)
 local MapQuery = require(Shared.MapQuery)
-local Remotes = require(Shared.Remotes)
 local World = require(script.Parent.World)
 
 local Arena = {}
@@ -368,7 +367,8 @@ function Arena.breakPiece(kind: string, id: number): (number?, number?)
 		end
 	end
 	pieceParts[key] = nil
-	Remotes.CoverBroken:FireAllClients(kind, id)
+	-- Clients (and players who join later) read the broken set from this attribute.
+	Workspace:SetAttribute("CoverBroken", (Workspace:GetAttribute("CoverBroken") or "") .. key .. ",")
 	local list = if kind == "circle" then current.circles else current.boxes
 	for _, piece in list do
 		if piece.id == id then
@@ -469,6 +469,7 @@ function Arena.load(name: string)
 
 	folder.Parent = Workspace
 	Arena.folder = folder
+	Workspace:SetAttribute("CoverBroken", "")
 	Workspace:SetAttribute("Map", name)
 	Workspace:SetAttribute("MapDisplay", map.displayName)
 end

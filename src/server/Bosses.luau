@@ -233,7 +233,19 @@ function Bosses.died(e: World.Entity, x: number, z: number)
 		local p = World.entities[id]
 		if p and p.player then
 			Profiles.addCoins(p.player, B.reward.coins)
-			World.hooks.addXp(p, B.reward.xp, "boss")
+			if p.alive then
+				World.hooks.addXp(p, B.reward.xp, "boss")
+			else
+				task.spawn(function() -- respawning in the arena: pay the XP once it's back
+					for _ = 1, 30 do
+						task.wait(0.5)
+						if p.alive then
+							World.hooks.addXp(p, B.reward.xp, "boss")
+							return
+						end
+					end
+				end)
+			end
 			paid += 1
 		end
 	end

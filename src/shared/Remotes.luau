@@ -46,7 +46,6 @@ local RELIABLE = {
 	"EquipRobot",
 	"Announce", -- big centre banner (boss warnings, hazards)
 	"MapSwap", -- fade colour before the map changes (D81)
-	"CoverBroken", -- a boss smashed a destructible cover piece (kind, id)
 }
 local UNRELIABLE = {
 	"AimUpdate",

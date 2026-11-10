@@ -144,7 +144,7 @@ end
 -- "small" = a Scrap Heap of bent metal, "large" = a Robot Wreck in the centre.
 -- Each is a Model: an invisible cylinder is the solid hitbox, the rest is cosmetic.
 
-export type Crate = { id: number, kind: string, x: number, z: number, radius: number, hp: number, maxHp: number, part: Model?, alive: boolean }
+export type Crate = { id: number, kind: string, x: number, z: number, radius: number, hp: number, maxHp: number, part: Model?, alive: boolean, respawnAt: number? }
 
 Pickups.crates = {} :: { Crate }
 Pickups.chest = nil :: Crate?
@@ -274,6 +274,7 @@ function Pickups.damageCrate(c: Crate, amount: number, attacker: World.Entity?)
 			c.part = nil
 		end
 		local wait = if type(def.respawn) == "table" then rng:NextNumber(def.respawn[1], def.respawn[2]) else def.respawn
+		c.respawnAt = os.clock() + wait
 		task.delay(wait, placeCrate, c)
 	end
 end
@@ -365,7 +366,9 @@ function Pickups.setMode(newMode: string)
 		fillZones()
 		fillPods()
 		for _, c in Pickups.crates do
-			placeCrate(c)
+			if not (c.respawnAt and os.clock() < c.respawnAt) then -- broken ones wait for their own timer
+				placeCrate(c)
+			end
 		end
 	end
 end

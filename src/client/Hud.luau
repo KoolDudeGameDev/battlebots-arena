@@ -522,7 +522,6 @@ local function buildBoss()
 		TextStrokeColor3 = Color3.new(0, 0, 0),
 	})
 	-- The map flow (D81): which map is up and how long it lasts.
-	local Workspace = game:GetService("Workspace")
 	local mapLabel = text(gui, {
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 94),
@@ -875,7 +874,9 @@ function Hud.init(aimTouchActive)
 		tray.Visible = false
 		collapsed.Visible = false
 		deathTitle.Text = "DESTROYED"
-		deathInfo.Text = string.format("by %s (Lv %d)\nYou reached Lv %d · Score %s", info.killerName, info.killerLevel, info.level, fmt(info.score))
+		deathInfo.Text = if info.keepsLevel
+			then string.format("by %s\nYou keep Lv %d · back in the fight in a moment", info.killerName, info.level)
+			else string.format("by %s (Lv %d)\nYou reached Lv %d · Score %s", info.killerName, info.killerLevel, info.level, fmt(info.score))
 		deathRespawnAt = info.respawnAt
 	end)
 	-- Debug command output and other system lines appear in chat.

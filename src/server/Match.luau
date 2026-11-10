@@ -284,7 +284,7 @@ local function spawnPlayer(e: World.Entity, keep: boolean?)
 	e.armor, e.tempArmor, e.tempArmorUntil = 0, 0, 0
 	e.regenUntil, e.regenRate = 0, 0
 	e.bonusHp, e.bonusHpUntil = 0, 0
-	e.burnUntil, e.burnAcc, e.burnSourceId = 0, 0, nil
+	e.burnUntil, e.burnAcc, e.burnSourceId, e.inLava = 0, 0, nil, false
 	if not keep then
 		e.offer, e.pendingOffers = nil, 0
 	end
@@ -514,7 +514,7 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 		local arenaGen = victim.generation
 		task.delay(Config.Maps.arenaDeath.respawn, function()
 			if World.byPlayer[arenaPlayer] == victim and victim.generation == arenaGen then
-				spawnPlayer(victim, Arena.isArena()) -- the fight may have ended meanwhile
+				spawnPlayer(victim, true) -- the level was kept at death, even if the fight ended meanwhile
 			end
 		end)
 		return
@@ -552,6 +552,9 @@ end
 -- of the new map, spread out from each other, with fresh spawn protection.
 function Match.placeEveryone(rng: Random)
 	local placed: { { number } } = {}
+	for _, c in Pickups.cratePositions() do
+		table.insert(placed, { c.X, c.Z }) -- crates count as "taken"
+	end
 	local map = Arena.map()
 	local y = Config.Robot.HipHeight + Config.Robot.RootSize[2] / 2
 	for _, e in World.entities do

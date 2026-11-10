@@ -204,12 +204,18 @@ local function isTargetable(e: World.Entity, t: number): boolean
 	return e.alive and t >= e.protectedUntil
 end
 
+-- Two players on the same side: everyone is in boss arenas (co-op, Q1).
+local function allies(a: World.Entity?, b: World.Entity): boolean
+	return a ~= nil and a ~= b and a.player ~= nil and b.player ~= nil and Arena.isArena()
+end
+
 -- Every enemy robot (and optionally crate) as a hit target.
 local function targets(selfId: number, crates: boolean): { Target }
 	local t = now()
 	local out: { Target } = {}
+	local self = World.entities[selfId]
 	for _, e in World.entities do
-		if e.id ~= selfId and e.root and isTargetable(e, t) then
+		if e.id ~= selfId and e.root and isTargetable(e, t) and not allies(self, e) then
 			local x, z = World.position(e)
 			table.insert(out, { x = x, z = z, r = World.hitRadius(e, Config), e = e })
 		end
@@ -540,7 +546,7 @@ local function splash(p: Projectile, owner: World.Entity?, x: number, z: number,
 	local edge = Config.Combat.SplashEdge
 	Remotes.Effect:FireAllClients("explosion", x, z, r)
 	for _, e in World.entities do
-		if e.id ~= p.ownerId and e.id ~= directId and e.alive and e.root then
+		if e.id ~= p.ownerId and e.id ~= directId and e.alive and e.root and not allies(owner, e) then
 			local ex, ez = World.position(e)
 			local dist = math.sqrt((ex - x) ^ 2 + (ez - z) ^ 2)
 			local hr = World.hitRadius(e, Config)
@@ -888,7 +894,7 @@ local function tickTraps(t: number)
 			removeTrap(i)
 		elseif t >= tr.armAt then
 			for _, e in World.entities do
-				if e.id ~= tr.ownerId and e.root and isTargetable(e, t) then
+				if e.id ~= tr.ownerId and e.root and isTargetable(e, t) and not allies(World.entities[tr.ownerId], e) then
 					local ex, ez = World.position(e)
 					local hr = World.hitRadius(e, Config)
 					if (ex - tr.x) ^ 2 + (ez - tr.z) ^ 2 <= (def.radius + hr) ^ 2 then
@@ -1061,7 +1067,7 @@ local function stepProjectiles(dt: number, fields: { any })
 		-- Robots: a piercing railgun shot hits every robot before the first solid thing.
 		local hitBody: Body? = nil
 		for _, b in bodies do
-			if b.e.id == p.ownerId or b.e.id == p.skipEntity or t < b.e.protectedUntil or not b.e.alive then
+			if b.e.id == p.ownerId or b.e.id == p.skipEntity or t < b.e.protectedUntil or not b.e.alive or allies(owner, b.e) then
 				continue
 			end
 			if p.hitIds and p.hitIds[b.e.id] then

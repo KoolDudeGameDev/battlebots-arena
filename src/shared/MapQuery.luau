@@ -11,32 +11,45 @@ local MapQuery = {}
 
 MapQuery.CIRCLE_KEY = 10000
 
+-- One slab of the slab test: narrows [tmin, tmax] to where p + d*t is within +-h.
+-- Returns nil, nil when the segment misses the slab. No tables: this runs per box,
+-- per shot, per frame on the server and every client.
+local function slab(p: number, d: number, h: number, tmin: number, tmax: number): (number?, number?)
+	if math.abs(d) < 1e-9 then
+		if p < -h or p > h then
+			return nil, nil
+		end
+		return tmin, tmax
+	end
+	local t1, t2 = (-h - p) / d, (h - p) / d
+	if t1 > t2 then
+		t1, t2 = t2, t1
+	end
+	tmin, tmax = math.max(tmin, t1), math.min(tmax, t2)
+	if tmin > tmax then
+		return nil, nil
+	end
+	return tmin, tmax
+end
+
 -- Entry fraction (0..1) of the segment into a box grown by pad, or nil.
 local function segmentBox(x1: number, z1: number, x2: number, z2: number, b: any, pad: number): number?
 	local hu, hv = b.hu + pad, b.hv + pad
 	local ax, az = x1 - b.cx, z1 - b.cz
+	-- Cheap reject: both ends beyond the box's bounding circle on the same side.
+	local reach = hu + hv
+	if (ax > reach and x2 - b.cx > reach) or (ax < -reach and x2 - b.cx < -reach) or (az > reach and z2 - b.cz > reach) or (az < -reach and z2 - b.cz < -reach) then
+		return nil
+	end
 	local dx, dz = x2 - x1, z2 - z1
 	-- Into box space.
 	local pu, pv = ax * b.ux + az * b.uz, -ax * b.uz + az * b.ux
 	local du, dv = dx * b.ux + dz * b.uz, -dx * b.uz + dz * b.ux
-	local tmin, tmax = 0, 1
-	for _, axis in { { pu, du, hu }, { pv, dv, hv } } do
-		local p, d, h = axis[1], axis[2], axis[3]
-		if math.abs(d) < 1e-9 then
-			if p < -h or p > h then
-				return nil
-			end
-		else
-			local t1, t2 = (-h - p) / d, (h - p) / d
-			if t1 > t2 then
-				t1, t2 = t2, t1
-			end
-			tmin, tmax = math.max(tmin, t1), math.min(tmax, t2)
-			if tmin > tmax then
-				return nil
-			end
-		end
+	local tmin, tmax = slab(pu, du, hu, 0, 1)
+	if not tmin or not tmax then
+		return nil
 	end
+	tmin = slab(pv, dv, hv, tmin, tmax)
 	return tmin
 end
 

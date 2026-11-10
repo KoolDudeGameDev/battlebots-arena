@@ -50,13 +50,19 @@ local map = MapLayouts[Workspace:GetAttribute("Map") or "grassland"] or MapLayou
 local broken: { [number]: boolean } = {}
 Workspace:GetAttributeChangedSignal("Map"):Connect(function()
 	map = MapLayouts[Workspace:GetAttribute("Map")] or MapLayouts.grassland
+end)
+-- The server lists smashed pieces as "key,key," (reset to "" on every map load).
+local function readBroken()
 	broken = {}
-end)
-Remotes.CoverBroken.OnClientEvent:Connect(function(kind: any, id: any)
-	if type(id) == "number" then
-		broken[if kind == "circle" then MapQuery.CIRCLE_KEY + id else id] = true
+	local list = Workspace:GetAttribute("CoverBroken")
+	if type(list) == "string" then
+		for key in string.gmatch(list, "%d+") do
+			broken[tonumber(key) :: number] = true
+		end
 	end
-end)
+end
+readBroken()
+Workspace:GetAttributeChangedSignal("CoverBroken"):Connect(readBroken)
 -- What a shot sounds and looks like when it hits each kind of cover (Vfx.impact styles).
 local SURFACE = { wood = "wood", metal = "robot", scrap = "robot" }
 
