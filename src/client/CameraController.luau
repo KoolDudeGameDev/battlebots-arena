@@ -14,8 +14,7 @@ local CameraController = {}
 
 local player = Players.LocalPlayer
 local C = Config.Camera
-local THIRD_BACK = 16
-local THIRD_UP = 8
+local THIRD_DIST = 18 -- camera distance from the robot (16 back and 8 up at the default pitch)
 local THIRD_LOOK_AHEAD = 30
 local trauma = 0
 
@@ -62,7 +61,10 @@ function CameraController.init()
 			local yaw = ClientState.camYaw
 			local dir = Vector3.new(math.cos(yaw), 0, math.sin(yaw))
 			local base = focus + Vector3.new(0, 3 * scale, 0) + offset
-			local eye = base - dir * THIRD_BACK * scale + Vector3.new(0, THIRD_UP * scale, 0)
+			-- Mouse up and down swings the camera lower (look out across the arena) or
+			-- higher (look down on the fight) round the robot (D78).
+			local pitch = ClientState.camPitch or C.PitchDefault
+			local eye = base - dir * math.cos(pitch) * THIRD_DIST * scale + Vector3.new(0, math.sin(pitch) * THIRD_DIST * scale, 0)
 			cam.CFrame = CFrame.lookAt(eye, base + dir * THIRD_LOOK_AHEAD)
 		else
 			cam.FieldOfView = C.Fov

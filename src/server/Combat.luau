@@ -297,6 +297,35 @@ local function knock(target: World.Entity, fromX: number, fromZ: number, force: 
 end
 Combat.knock = knock -- bosses and hazards push robots too (D74)
 
+-- Flipper on a robot nobody drives (dummies, D78): the server somersaults its
+-- anchored root, the same arc a player's client plays (InputController.flipOver).
+local function flipAnchored(target: World.Entity, fromX: number, fromZ: number, duration: number)
+	local root = target.root
+	if not root or not root.Anchored then
+		return
+	end
+	local start = root.CFrame
+	local push = Vector3.new(start.Position.X - fromX, 0, start.Position.Z - fromZ)
+	local axis = if push.Magnitude > 0.05 then push.Unit:Cross(Vector3.yAxis) * -1 else start.RightVector
+	local airTime = math.min(0.8, duration)
+	local gen = target.generation
+	local t = 0
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function(dt)
+		t += dt
+		local k = math.min(1, t / airTime)
+		if not root.Parent or target.generation ~= gen then
+			conn:Disconnect()
+			return
+		end
+		root.CFrame = CFrame.new(start.Position + Vector3.new(0, 6 * 4 * k * (1 - k), 0)) * CFrame.fromAxisAngle(axis, k * 2 * math.pi) * start.Rotation
+		if k >= 1 then
+			conn:Disconnect()
+			root.CFrame = start
+		end
+	end)
+end
+
 -- Damage ----------------------------------------------------------------------
 
 -- Damage numbers for every hit (D43): the shooter sees what they dealt, the
@@ -1201,10 +1230,14 @@ local function useSkill(e: World.Entity)
 		local half = math.rad(S.arcDegrees / 2)
 		for _, tg in targets(e.id, false) do
 			local v = tg.e
-			if v and Combat2D.inArc(x, z, e.aim, half, reach, tg.x, tg.z, tg.r) then
+			-- Bosses are far too heavy to flip (D78).
+			if v and not v.isBoss and Combat2D.inArc(x, z, e.aim, half, reach, tg.x, tg.z, tg.r) then
 				v.rootedUntil = math.max(v.rootedUntil, t + flipTime)
 				v.stunnedUntil = math.max(v.stunnedUntil, t + flipTime)
 				knock(v, x, z, S.knockback, flipTime)
+				if not v.player then
+					flipAnchored(v, x, z, flipTime) -- players flip on their own client
+				end
 				local gen = v.generation
 				if v.model then
 					v.model:SetAttribute("Flipped", true)

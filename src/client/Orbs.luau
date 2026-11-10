@@ -2,7 +2,7 @@
 -- above the ground and bob gently (pods also turn), so they read as live
 -- pickups and stay visible over tall grass in third-person. Orbs are matte
 -- gems, not neon. The Health Pack, Armor Pod and Fortify Pod are 3D models
--- (PickupModels).
+-- (PickupModels), and so is the gold coin, which spins on its edge (D78).
 -- A collected pickup flies to the robot that took it (orbs tint green if that
 -- robot has Scavenger).
 
@@ -16,6 +16,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 local PickupModels = require(script.Parent.PickupModels)
+local Sfx = require(script.Parent.Sfx)
 
 local Orbs = {}
 
@@ -29,15 +30,12 @@ local COLORS = {
 	health = Color3.fromRGB(255, 60, 70),
 	regen = Color3.fromRGB(140, 255, 90),
 	armor = Color3.fromRGB(90, 200, 255),
-	coin = Color3.fromRGB(255, 196, 40), -- gold is only ever a coin (D73)
 }
 -- Pods are blocks so they never read as XP orbs; health packs are kept small (D41).
 local POD_LOOK = {
 	health = { shape = Enum.PartType.Block, size = 1.2 },
 	regen = { shape = Enum.PartType.Ball, size = 1.6 },
 	armor = { shape = Enum.PartType.Block, size = 1.8 },
-	-- A coin stands on its edge and spins (D73).
-	coin = { shape = Enum.PartType.Cylinder, size = 2.2, dims = Vector3.new(0.35, 2.2, 2.2), spin = true },
 }
 local FLY_TIME = 0.15
 local FLOAT = 1.9 -- gap between the ground and the bottom of an orb, clear of grass blades
@@ -48,7 +46,7 @@ local ANIMATE_RADIUS = 140 -- only nearby pickups bob; distant ones hold still (
 
 -- A pickup is either a pooled Part (orbs and regen pods) or a Model
 -- (health, armor and fortify), never both.
-type Floater = { part: Part?, model: Model?, x: number, y: number, z: number, phase: number, pod: boolean, spin: boolean? }
+type Floater = { part: Part?, model: Model?, x: number, y: number, z: number, phase: number, pod: boolean, spin: boolean?, kind: string }
 local floaters: { [number]: Floater } = {}
 local orbs: { [number]: Floater } = {}
 local pool: { Part } = {}
@@ -110,7 +108,7 @@ local function create(entry: { number })
 		local y = FLOAT + size.Y / 2
 		model:PivotTo(CFrame.new(x, y, z))
 		model.Parent = folder
-		local f: Floater = { part = nil, model = model, x = x, y = y, z = z, phase = phase, pod = true }
+		local f: Floater = { part = nil, model = model, x = x, y = y, z = z, phase = phase, pod = true, spin = kind == "coin", kind = kind }
 		orbs[id] = f
 		floaters[id] = f
 		return
@@ -123,13 +121,13 @@ local function create(entry: { number })
 	end
 	local p = acquire()
 	p.Shape = if pod then pod.shape else Enum.PartType.Ball
-	p.Size = if pod and pod.dims then pod.dims else Vector3.one * size
-	p.Material = if kind == "coin" then Enum.Material.Neon else Enum.Material.SmoothPlastic
+	p.Size = Vector3.one * size
+	p.Material = Enum.Material.SmoothPlastic
 	p.Color = COLORS[kind]
 	local y = FLOAT + size / 2
 	-- Pods sit tilted 45 degrees so they read as pickups, not orbs.
-	p.CFrame = CFrame.new(x, y, z) * (if pod and not pod.spin then CFrame.Angles(0, math.rad(45), math.rad(45)) else CFrame.identity)
-	local f: Floater = { part = p, model = nil, x = x, y = y, z = z, phase = phase, pod = pod ~= nil, spin = pod and pod.spin }
+	p.CFrame = CFrame.new(x, y, z) * (if pod then CFrame.Angles(0, math.rad(45), math.rad(45)) else CFrame.identity)
+	local f: Floater = { part = p, model = nil, x = x, y = y, z = z, phase = phase, pod = pod ~= nil, kind = kind }
 	orbs[id] = f
 	floaters[id] = f
 end
@@ -155,12 +153,10 @@ local function animate(t: number)
 			local y = f.y + math.sin(t * BOB_SPEED + f.phase) * BOB
 			local cf = CFrame.new(f.x, y, f.z)
 			if f.model then
-				-- Models stay upright and turn slowly, like a game pickup.
-				f.model:PivotTo(cf * CFrame.Angles(0, t * POD_TURN + f.phase, 0))
+				-- Models stay upright and turn slowly, like a game pickup; coins spin on edge.
+				f.model:PivotTo(cf * CFrame.Angles(0, t * (if f.spin then 3 else POD_TURN) + f.phase, 0))
 			elseif f.part then
-				if f.spin then
-					cf *= CFrame.Angles(0, t * 3 + f.phase, 0) -- coins spin on edge
-				elseif f.pod then
+				if f.pod then
 					cf *= CFrame.Angles(0, t * POD_TURN + f.phase, 0) * CFrame.Angles(math.rad(45), 0, math.rad(45))
 				end
 				table.insert(animParts, f.part)
@@ -210,6 +206,9 @@ function Orbs.init(fx: Folder)
 				orbs[flat[i]] = nil
 				floaters[flat[i]] = nil
 				local target = robotByUserId(flat[i + 1])
+				if f.kind == "coin" and target and target == Players.LocalPlayer.Character then
+					Sfx.ui("Coin")
+				end
 				if target then
 					if target:GetAttribute("Scavenger") and f.part then
 						f.part.Color = Color3.fromRGB(120, 255, 140)

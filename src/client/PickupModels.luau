@@ -1,9 +1,10 @@
--- 3D models for the Health Pack, Armor Pod and Fortify Pod pickups.
+-- 3D models for the Health Pack, Armor Pod, Fortify Pod and coin pickups.
 --
 -- Uses a Toolbox model if you add one in Studio:
 --   ReplicatedStorage > PickupModels > HealthPack   (a Model, Accessory or Tool)
 --   ReplicatedStorage > PickupModels > ArmorPack
 --   ReplicatedStorage > PickupModels > FortifyPod
+--   ReplicatedStorage > PickupModels > Coin
 -- (Rojo leaves extra children of ReplicatedStorage alone, so they survive syncs.)
 -- Any scripts inside a Toolbox model are removed before use, it is anchored and
 -- made non-colliding, and it is scaled to fit the pickup size.
@@ -13,8 +14,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PickupModels = {}
 
-local TEMPLATE_NAMES = { health = "HealthPack", armor = "ArmorPack", fortify = "FortifyPod" }
-local FIT_SIZE = { health = 2.2, armor = 2.6, fortify = 2.4 } -- largest dimension, in studs
+local TEMPLATE_NAMES = { health = "HealthPack", armor = "ArmorPack", fortify = "FortifyPod", coin = "Coin" }
+local FIT_SIZE = { health = 2.2, armor = 2.6, fortify = 2.4, coin = 2.4 } -- largest dimension, in studs
 
 local function part(model: Model, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?, shape: Enum.PartType?): Part
 	local p = Instance.new("Part")
@@ -94,7 +95,43 @@ local function builtInFortify(): Model
 	return m
 end
 
-local BUILT_IN = { health = builtInHealth, armor = builtInArmor, fortify = builtInFortify }
+-- A struck gold coin (D78): a raised rim, a bright field and a cog emblem on both
+-- faces, with a glint of sparkle and a warm light. It stands on its edge and spins.
+local function builtInCoin(): Model
+	local m = Instance.new("Model")
+	m.Name = "Coin"
+	local rimGold = Color3.fromRGB(214, 158, 36)
+	local fieldGold = Color3.fromRGB(255, 206, 72)
+	local deepGold = Color3.fromRGB(176, 120, 24)
+	local rim = part(m, Vector3.new(0.34, 2.2, 2.2), CFrame.identity, rimGold, Enum.Material.Metal, Enum.PartType.Cylinder)
+	rim.Reflectance = 0.25
+	local field = part(m, Vector3.new(0.38, 1.8, 1.8), CFrame.identity, fieldGold, Enum.Material.Metal, Enum.PartType.Cylinder)
+	field.Reflectance = 0.3
+	part(m, Vector3.new(0.42, 0.9, 0.9), CFrame.identity, deepGold, Enum.Material.Metal, Enum.PartType.Cylinder)
+	part(m, Vector3.new(0.44, 0.4, 0.4), CFrame.identity, fieldGold, Enum.Material.Metal, Enum.PartType.Cylinder)
+	for i = 0, 5 do
+		local a = i * math.pi / 3
+		part(m, Vector3.new(0.42, 0.26, 0.26), CFrame.new(0, math.cos(a) * 0.52, math.sin(a) * 0.52) * CFrame.Angles(a, 0, 0), deepGold, Enum.Material.Metal)
+	end
+	local glint = Instance.new("ParticleEmitter")
+	glint.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	glint.Rate = 3
+	glint.Lifetime = NumberRange.new(0.4, 0.7)
+	glint.Speed = NumberRange.new(0, 0.5)
+	glint.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.6), NumberSequenceKeypoint.new(1, 0) })
+	glint.Color = ColorSequence.new(Color3.fromRGB(255, 240, 180))
+	glint.LightEmission = 1
+	glint.Parent = rim
+	local light = Instance.new("PointLight")
+	light.Color = Color3.fromRGB(255, 200, 80)
+	light.Range = 7
+	light.Brightness = 0.8
+	light.Parent = rim
+	m.PrimaryPart = rim
+	return m
+end
+
+local BUILT_IN = { health = builtInHealth, armor = builtInArmor, fortify = builtInFortify, coin = builtInCoin }
 
 -- Strips scripts, anchors, disables collision, and scales to fit.
 local function prepare(model: Model, fit: number): Model

@@ -149,6 +149,68 @@ local function slide(root: BasePart, dir: Vector3, distance: number, duration: n
 	end)
 end
 
+-- Third-person look up and down: positive = mouse moved down = camera higher.
+local function lookUpDown(delta: number)
+	local C = Config.Camera
+	ClientState.camPitch = math.clamp((ClientState.camPitch or C.PitchDefault) + delta, C.PitchMin, C.PitchMax)
+end
+
+-- Hull steering (D78). Guns only swivel 90 degrees either side of the hull's front,
+-- so the hull keeps the aim inside that arc: it faces where it drives, but backs up
+-- (instead of turning round) when you drive away from your aim, and turns on the
+-- spot when you stand still and aim behind. Heavy robots turn slower.
+local reversing = false
+local function steerHull(root: BasePart, humanoid: Humanoid, dt: number)
+	if humanoid.AutoRotate then
+		humanoid.AutoRotate = false
+	end
+	if humanoid.PlatformStand then
+		return -- mid-flip: the somersault owns the root
+	end
+	local model = root.Parent :: Model
+	local P = Config.Presentation
+	local chassis = model:GetAttribute("Chassis") or "rookie"
+	local rate = if chassis == "bomber" and model:GetAttribute("Small") then P.turnRate.bomberSmall else P.turnRate[chassis] or P.turnRate.rookie
+	local aim = Vector3.new(math.cos(ClientState.localAim), 0, math.sin(ClientState.localAim))
+	local look = root.CFrame.LookVector
+	local facing = Vector3.new(look.X, 0, look.Z)
+	if facing.Magnitude < 1e-3 then
+		return
+	end
+	facing = facing.Unit
+	local move = humanoid.MoveDirection
+	move = Vector3.new(move.X, 0, move.Z)
+	local want: Vector3
+	if move.Magnitude > 0.1 then
+		move = move.Unit
+		-- Hysteresis, so strafing across the 90-degree line doesn't flicker.
+		local dot = move:Dot(aim)
+		if dot < P.reverseDot then
+			reversing = true
+		elseif dot > -P.reverseDot then
+			reversing = false
+		end
+		want = if reversing then -move else move
+	else
+		reversing = false
+		local swivel = math.rad(P.swivelDegrees) * 0.9
+		if facing:Dot(aim) >= math.cos(swivel) then
+			return -- the turret can reach the aim: the hull stays put
+		end
+		want = aim
+	end
+	local current = math.atan2(facing.Z, facing.X)
+	local target = math.atan2(want.Z, want.X)
+	local diff = (target - current + math.pi) % (2 * math.pi) - math.pi
+	local step = math.clamp(diff, -rate * dt, rate * dt)
+	if math.abs(step) < 1e-4 then
+		return
+	end
+	local yaw = current + step
+	local pos = root.Position
+	root.CFrame = CFrame.lookAt(pos, pos + Vector3.new(math.cos(yaw), 0, math.sin(yaw)))
+end
+
 local function performDash(root: BasePart, scale: number)
 	local humanoid = (root.Parent :: Model):FindFirstChildOfClass("Humanoid")
 	local dir = if humanoid and humanoid.MoveDirection.Magnitude > 0.1
@@ -242,10 +304,12 @@ function InputController.init()
 		end
 	end)
 
-	-- Third-person: the mouse turns the camera (cursor locked to the centre).
+	-- Third-person: the mouse turns the camera (cursor locked to the centre and
+	-- hidden behind the crosshair) and looks up and down (D78).
 	UserInputService.InputChanged:Connect(function(input)
 		if ClientState.camMode == "third" and not ClientState.cursorFree and input.UserInputType == Enum.UserInputType.MouseMovement then
 			ClientState.camYaw += input.Delta.X * MOUSE_YAW
+			lookUpDown(input.Delta.Y * MOUSE_YAW)
 		end
 	end)
 
@@ -269,6 +333,7 @@ function InputController.init()
 		local pos = Vector2.new(touch.Position.X, touch.Position.Y)
 		if ClientState.camMode == "third" then
 			ClientState.camYaw += (pos.X - lastTouchPos.X) * TOUCH_YAW
+			lookUpDown((pos.Y - lastTouchPos.Y) * TOUCH_YAW)
 			lastTouchPos = pos
 			return
 		end
@@ -297,9 +362,14 @@ function InputController.init()
 				local free = UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or ClientState.menuOpen
 				ClientState.cursorFree = free
 				UserInputService.MouseBehavior = if free then Enum.MouseBehavior.Default else Enum.MouseBehavior.LockCenter
+				-- The locked cursor is hidden; the crosshair shows where you aim (D78).
+				UserInputService.MouseIconEnabled = free
 			end
 			ClientState.localAim = ClientState.camYaw
-		elseif root then
+		else
+			UserInputService.MouseIconEnabled = true
+		end
+		if not third and root then
 			if ClientState.isTouch then
 				if not aimTouch and ClientState.autoFire then
 					local a = softAim(root)
@@ -314,6 +384,11 @@ function InputController.init()
 					ClientState.localAim = a
 				end
 			end
+		end
+
+		local humanoid = root and (root.Parent :: Model):FindFirstChildOfClass("Humanoid")
+		if root and humanoid and humanoid.Health > 0 then
+			steerHull(root, humanoid, dt)
 		end
 
 		local stickFiring = aimTouch ~= nil and not third -- in third-person the drag only turns the camera

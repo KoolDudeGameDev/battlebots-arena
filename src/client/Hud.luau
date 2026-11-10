@@ -442,7 +442,14 @@ local function buildWallet()
 	corner(pill, 16)
 	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, pill)
 	coinScale = new("UIScale", {}, pill)
-	coinText = text(pill, { Size = UDim2.fromOffset(0, 32), AutomaticSize = Enum.AutomaticSize.X, Text = "0 coins", TextColor3 = Color3.fromRGB(255, 196, 40), Font = Enum.Font.GothamBold })
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }, pill)
+	-- A gold coin glyph: rim, bright field and a darker centre (D78).
+	local glyph = new("Frame", { Size = UDim2.fromOffset(18, 18), BackgroundColor3 = Color3.fromRGB(255, 206, 72), LayoutOrder = 0 }, pill)
+	corner(glyph, 9)
+	new("UIStroke", { Color = Color3.fromRGB(176, 120, 24), Thickness = 2 }, glyph)
+	local dot = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(8, 8), BackgroundColor3 = Color3.fromRGB(214, 158, 36) }, glyph)
+	corner(dot, 4)
+	coinText = text(pill, { Size = UDim2.fromOffset(0, 32), AutomaticSize = Enum.AutomaticSize.X, Text = "0 coins", TextColor3 = Color3.fromRGB(255, 196, 40), Font = Enum.Font.GothamBold, LayoutOrder = 1 })
 	local garage: TextButton = new("TextButton", {
 		Size = UDim2.fromOffset(if isTouch then 104 else 120, 32),
 		BackgroundColor3 = Color3.fromRGB(255, 196, 40),

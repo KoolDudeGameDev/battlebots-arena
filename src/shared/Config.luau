@@ -29,7 +29,6 @@ Config.Robot = {
 	HitboxRadius = 3,
 	HipHeight = 1.2,
 	RootSize = { 4, 2, 4 },
-	TurretHeight = 0.8, -- turret centre above the root centre
 	BodyLift = 2.0, -- a bigger body is raised (scale - 1) * BodyLift so its wheels stay on the ground
 	BarrelLength = 3,
 	-- Realistic paint jobs (D77): each player gets one, still easy to tell apart.
@@ -50,6 +49,28 @@ Config.Camera = {
 	Back = 35,
 	Fov = 45,
 	Lerp = 0.25, -- per frame at 60 fps
+	-- Third-person look up and down (D78): camera elevation above the robot, radians.
+	PitchDefault = 0.46,
+	PitchMin = 0.08, -- nearly level: look out across the arena
+	PitchMax = 1.15, -- nearly overhead
+}
+
+-- Robot presentation (D78). Cosmetic only: the server never reads these.
+Config.Presentation = {
+	-- How fast each hull turns toward where it drives (radians per second): light
+	-- robots snap round, heavy ones swing.
+	turnRate = { rookie = 10, bombard = 4.5, scorcher = 8, brawler = 6.5, bomber = 3.5, bomberSmall = 12 },
+	swivelDegrees = 90, -- turrets and mounted weapons swivel this far either side of the hull's front (a 180-degree arc)
+	reverseDot = -0.3, -- driving this far away from the aim backs the hull up instead of turning it round
+	-- Weapon kick per shot: studs back along the barrel, degrees of muzzle climb, seconds to settle.
+	recoil = {
+		rookie = { slide = 0.35, climb = 2, settle = 0.12 },
+		bombard = { slide = 0.6, climb = 7, settle = 0.45 },
+		bomber = { slide = 0.4, climb = 10, settle = 0.6 },
+		default = { slide = 0.2, climb = 1, settle = 0.1 },
+	},
+	smokeBelow = 0.35, -- HP fraction where a damaged robot starts to smoke
+	sparksBelow = 0.15, -- and where it also throws sparks
 }
 
 Config.Combat = {
@@ -97,7 +118,7 @@ Config.Weapons = {
 		code = 3,
 		damage = 26,
 		splashDamage = 22,
-		splashRadius = 9,
+		splashRadius = 12, -- bigger blast (D78)
 		fireRate = 1.2,
 		launchSpeed = 40,
 		speed = 110, -- top speed

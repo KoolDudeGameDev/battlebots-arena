@@ -7,6 +7,7 @@ local TweenService = game:GetService("TweenService")
 
 local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
 local Vfx = require(script.Parent.Vfx)
+local Sfx = require(script.Parent.Sfx)
 
 local Effects = {}
 
@@ -83,7 +84,24 @@ local RICH: { [string]: (x: number, z: number, radius: number) -> () } = {
 	end,
 }
 
+-- What each event sounds like (D78).
+local SOUND_OF = {
+	explosion = "Explosion",
+	death = "BigExplosion",
+	slam = "Slam",
+	fire = "FireBurst",
+	crate = "HeavyHit",
+	wall = "Rubble",
+	net = "NetLand",
+	trap = "TrapSnap",
+	deflect = "Deflect",
+}
+
 local function burst(kind: string, x: number, z: number, radius: number)
+	local sound = SOUND_OF[kind]
+	if sound then
+		Sfx.at(sound, Vector3.new(x, 3, z))
+	end
 	if kind == "warn" then
 		warnCircle(x, z, radius)
 		return
@@ -204,8 +222,10 @@ function Effects.init(fx: Folder)
 				if kind == "laser" then
 					beam(x, z, x2, z2, Color3.fromRGB(255, 50, 70), 0.6)
 					Vfx.impact(x2, z2, "laser")
+					Sfx.at("Laser", Vector3.new(x, 3, z))
 				else
 					beam(x, z, x2, z2)
+					Sfx.at("Zap", Vector3.new(x2, 3, z2))
 				end
 			end
 		else
@@ -217,6 +237,11 @@ function Effects.init(fx: Folder)
 			show(targetId, x, z, amount, kind)
 			if kind ~= "block" then
 				Vfx.sparks(x, z, 3) -- melee and flame hits spark too
+			end
+			if kind == "dealt" then
+				Sfx.ui("HitConfirm") -- a small tick: your hit landed
+			elseif kind == "block" then
+				Sfx.at("Deflect", Vector3.new(x, 3, z))
 			end
 		end
 	end)

@@ -13,6 +13,7 @@ local Projectiles = require(script.Projectiles)
 local Orbs = require(script.Orbs)
 local Effects = require(script.Effects)
 local Vfx = require(script.Vfx)
+local Sfx = require(script.Sfx)
 local Hud = require(script.Hud)
 local Garage = require(script.Garage)
 
@@ -23,6 +24,7 @@ fx.Parent = Workspace
 
 ClientState.actions.shake = CameraController.shake
 
+Sfx.init(fx) -- first: every other module may play sounds
 CameraController.init()
 InputController.init()
 Robots.init(fx)

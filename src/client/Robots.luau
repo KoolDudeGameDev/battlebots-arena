@@ -12,12 +12,28 @@ local RunService = game:GetService("RunService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local ClientState = require(script.Parent.ClientState)
+local Sfx = require(script.Parent.Sfx)
 
 local Robots = {}
 
 local player = Players.LocalPlayer
 local fxFolder: Folder
 local RING_SHOW_MARGIN = 25 -- studs outside an enemy's range where its ring appears
+local PRES = Config.Presentation
+local SWIVEL = math.rad(PRES.swivelDegrees)
+local HEAT_COLD = Color3.fromRGB(90, 40, 30)
+local HEAT_HOT = Color3.fromRGB(255, 150, 50)
+
+-- Animated parts found in a robot's Body (rescanned whenever the body is rebuilt).
+type Rig = {
+	yaw: { Motor6D }, -- turret and mount swivels: turn with the aim inside the swivel arc
+	gun: Motor6D?,
+	gunPart: BasePart?,
+	blink: { BasePart },
+	heat: { BasePart },
+	flameLoop: Sound?,
+	sawLoop: Sound?,
+}
 
 type View = {
 	model: Model,
@@ -41,8 +57,17 @@ type View = {
 	sideSpin: number,
 	smash: { [string]: { last: number, t: number } }, -- per hammer hub
 	angle: number,
+	hasAim: boolean,
 	spin: number,
+	sawRate: number, -- spins up and down instead of snapping (D78)
+	kick: number, -- recoil, 1 at the shot and settling to 0
+	heat: number, -- Scorcher heat glow, 0-1
 	lastHp: number,
+	lastArmor: number,
+	rig: Rig?,
+	rigBody: Instance?,
+	smoke: ParticleEmitter,
+	sparks: ParticleEmitter,
 	conns: { RBXScriptConnection },
 }
 
@@ -86,9 +111,21 @@ local function refresh(v: View)
 	local armor = m:GetAttribute("Armor") or 0
 	local maxArmor = m:GetAttribute("MaxArmor") or 0
 	local hasArmor = armor > 0 or maxArmor > 0
-	v.hpBack.Visible = hp < maxHp or hasArmor
-	v.armorBack.Visible = hasArmor
+	-- A boss's bars live in the HUD (top centre), so its tag shows only the name, high
+	-- above the body where it never hides the boss itself (D78).
+	local boss = m:HasTag("Boss")
+	v.hpBack.Visible = not boss and (hp < maxHp or hasArmor)
+	v.armorBack.Visible = not boss and hasArmor
+	v.levelLabel.Visible = not boss
 	v.armorFill.Size = UDim2.fromScale(math.clamp(armor / math.max(maxArmor, armor, 1), 0, 1), 1)
+	local scale = m:GetAttribute("VisualScale") or 1
+	v.gui.StudsOffsetWorldSpace = Vector3.new(0, 2.5 + 3 * scale, 0)
+
+	-- Damage you can read without the bar (D78): smoke under 35% HP, sparks under 15%.
+	local frac = hp / math.max(1, maxHp)
+	v.smoke.Enabled = hp > 0 and frac < PRES.smokeBelow
+	v.smoke.Rate = 6 + 18 * (1 - frac / PRES.smokeBelow)
+	v.sparks.Enabled = hp > 0 and frac < PRES.sparksBelow
 
 	local hitRadius = m:GetAttribute("HitRadius") or Config.Robot.HitboxRadius
 	v.hitDisc.Radius = hitRadius
@@ -122,7 +159,8 @@ local function setFade(v: View)
 	end
 end
 
-local function flash(v: View)
+local function flash(v: View, color: Color3?)
+	v.highlight.FillColor = color or Color3.new(1, 1, 1)
 	v.highlight.FillTransparency = 0.15
 	task.delay(0.08, function()
 		if v.highlight.Parent then
@@ -185,6 +223,36 @@ local function add(model: Instance)
 	local hitDisc = groundMarker(root, if mine then Color3.fromRGB(90, 220, 110) else Color3.fromRGB(235, 80, 70), 0.72)
 	local rangeRing = groundMarker(root, if mine then Color3.new(1, 1, 1) else Color3.fromRGB(255, 140, 130), 0.8)
 
+	-- Damage smoke and sparks rise from the hull (a local attachment on the root).
+	local hull = Instance.new("Attachment")
+	hull.Name = "DamageFx"
+	hull.Position = Vector3.new(0, 0.5, 0.6)
+	hull.Parent = root
+	local smoke = Instance.new("ParticleEmitter")
+	smoke.Enabled = false
+	smoke.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	smoke.Color = ColorSequence.new(Color3.fromRGB(60, 58, 56), Color3.fromRGB(110, 108, 104))
+	smoke.Size = NumberSequence.new(1, 3.5)
+	smoke.Transparency = NumberSequence.new(0.35, 1)
+	smoke.Lifetime = NumberRange.new(1.2, 1.8)
+	smoke.Speed = NumberRange.new(3, 5)
+	smoke.SpreadAngle = Vector2.new(15, 15)
+	smoke.EmissionDirection = Enum.NormalId.Top
+	smoke.Parent = hull
+	local sparks = Instance.new("ParticleEmitter")
+	sparks.Enabled = false
+	sparks.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	sparks.Color = ColorSequence.new(Color3.fromRGB(255, 220, 120))
+	sparks.LightEmission = 1
+	sparks.Size = NumberSequence.new(0.35, 0)
+	sparks.Lifetime = NumberRange.new(0.3, 0.6)
+	sparks.Speed = NumberRange.new(8, 14)
+	sparks.SpreadAngle = Vector2.new(60, 60)
+	sparks.Acceleration = Vector3.new(0, -40, 0)
+	sparks.Rate = 12
+	sparks.EmissionDirection = Enum.NormalId.Top
+	sparks.Parent = hull
+
 	local v: View = {
 		model = model,
 		gui = gui,
@@ -207,8 +275,17 @@ local function add(model: Instance)
 		sideSpin = 0,
 		smash = {},
 		angle = 0,
+		hasAim = false,
 		spin = 0,
+		sawRate = 2,
+		kick = 0,
+		heat = 0,
 		lastHp = model:GetAttribute("HP") or 0,
+		lastArmor = model:GetAttribute("Armor") or 0,
+		rig = nil,
+		rigBody = nil,
+		smoke = smoke,
+		sparks = sparks,
 		conns = {},
 	}
 	views[model] = v
@@ -226,13 +303,34 @@ local function add(model: Instance)
 		v.lastHp = hp
 		refresh(v)
 	end))
-	for _, attr in { "MaxHP", "Armor", "MaxArmor", "HitRadius", "AttackRange" } do
+	-- Armor soaking a hit flashes blue instead of white (D78).
+	table.insert(v.conns, model:GetAttributeChangedSignal("Armor"):Connect(function()
+		local armor = model:GetAttribute("Armor") or 0
+		if armor < v.lastArmor then
+			flash(v, Color3.fromRGB(110, 170, 255))
+		end
+		v.lastArmor = armor
+		refresh(v)
+	end))
+	for _, attr in { "MaxHP", "MaxArmor", "HitRadius", "AttackRange", "VisualScale" } do
 		table.insert(v.conns, model:GetAttributeChangedSignal(attr):Connect(function()
 			refresh(v)
 		end))
 	end
+	local lastLevel = model:GetAttribute("Level") or 0
 	table.insert(v.conns, model:GetAttributeChangedSignal("Level"):Connect(function()
+		local level = model:GetAttribute("Level") or 0
+		if model == player.Character and level > lastLevel then
+			Sfx.ui("LevelUp")
+		end
+		lastLevel = level
 		refresh(v)
+	end))
+	table.insert(v.conns, model:GetAttributeChangedSignal("Flips"):Connect(function()
+		local r = model.PrimaryPart
+		if r then
+			Sfx.at("Servo", r.Position)
+		end
 	end))
 	table.insert(v.conns, model:GetAttributeChangedSignal("Protected"):Connect(function()
 		setFade(v)
@@ -255,6 +353,10 @@ local function remove(model: Instance)
 	end
 	v.gui:Destroy()
 	v.highlight:Destroy()
+	local hull = v.smoke.Parent
+	if hull then
+		hull:Destroy()
+	end
 	v.hitDisc:Destroy()
 	v.rangeRing:Destroy()
 	if v.bubble then
@@ -276,13 +378,72 @@ local function shortestLerp(from: number, to: number, alpha: number): number
 	return from + d * alpha
 end
 
+-- The resting C0 of a motor, remembered the first time it is seen.
+local function baseOf(motor: Motor6D): CFrame
+	local base = sawBase[motor]
+	if not base then
+		base = motor.C0
+		sawBase[motor] = base
+	end
+	return base
+end
+
+-- Finds the parts this robot animates, once per body build.
+local function scan(body: Instance): Rig
+	local rig: Rig = { yaw = {}, gun = nil, gunPart = nil, blink = {}, heat = {}, flameLoop = nil, sawLoop = nil }
+	for _, d in body:GetDescendants() do
+		if d:IsA("Motor6D") then
+			if d.Name == "TurretMotor" or d.Name == "SwivelMotor" then
+				table.insert(rig.yaw, d)
+			elseif d.Name == "GunMotor" then
+				rig.gun = d
+				rig.gunPart = d.Part1
+			end
+		elseif d:IsA("BasePart") then
+			if d:GetAttribute("Blink") then
+				table.insert(rig.blink, d)
+			end
+			if d:GetAttribute("HeatGlow") then
+				table.insert(rig.heat, d)
+			end
+		end
+	end
+	local nozzle = body:FindFirstChild("Nozzle")
+	if nozzle and nozzle:IsA("BasePart") then
+		rig.flameLoop = Sfx.loop("Flamethrower", nozzle)
+	end
+	local saw = body:FindFirstChild("Saw")
+	if saw and saw:IsA("BasePart") then
+		rig.sawLoop = Sfx.loop("SawLoop", saw)
+	end
+	return rig
+end
+
+-- A shot left this robot's gun: kick it back (D78). Called by Projectiles.
+function Robots.kick(entityId: number)
+	for model, v in views do
+		if model:GetAttribute("EntityId") == entityId then
+			v.kick = 1
+			return
+		end
+	end
+end
+
 function Robots.init(folder: Folder)
 	fxFolder = folder
+	ClientState.actions.kick = Robots.kick
 	for _, m in CollectionService:GetTagged("Robot") do
 		task.spawn(add, m)
 	end
 	CollectionService:GetInstanceAddedSignal("Robot"):Connect(add)
 	CollectionService:GetInstanceRemovedSignal("Robot"):Connect(remove)
+	-- A boss is tagged after it becomes a robot: refresh so its tag drops the bars.
+	CollectionService:GetInstanceAddedSignal("Boss"):Connect(function(m)
+		local v = views[m :: Model]
+		if v then
+			refresh(v)
+		end
+	end)
 
 	RunService.RenderStepped:Connect(function(dt)
 		local me = player.Character
@@ -312,7 +473,8 @@ function Robots.init(folder: Folder)
 			local userId = model:GetAttribute("UserId") or 0
 			local target = if model == player.Character then ClientState.localAim else ClientState.aims[userId]
 			if target then
-				v.angle = if model == player.Character then target else shortestLerp(v.angle, target, math.min(1, dt * 15))
+				v.angle = if model == player.Character or not v.hasAim then target else shortestLerp(v.angle, target, math.min(1, dt * 15))
+				v.hasAim = true
 			end
 			local body = model:FindFirstChild("Body")
 			-- Third-person clarity (D72): your own name tag is hidden (the HUD shows it)
@@ -331,27 +493,80 @@ function Robots.init(folder: Folder)
 			for _, part in v.fadeParts do
 				part.LocalTransparencyModifier = if third then 0.8 else 0
 			end
-			local turret = body and body:FindFirstChild("Turret")
-			local motor = turret and turret:FindFirstChild("TurretMotor") :: Motor6D?
-			if motor then
-				local pos = root.Position + Vector3.new(0, Config.Robot.TurretHeight * scale + lift, 0)
-				local dir = Vector3.new(math.cos(v.angle), 0, math.sin(v.angle))
-				motor.C0 = root.CFrame:ToObjectSpace(CFrame.lookAt(pos, pos + dir))
+			if body and v.rigBody ~= body then
+				v.rigBody = body
+				v.rig = scan(body)
+			end
+			local rig = v.rig
+			local attacking = model:GetAttribute("Firing") == true
+
+			-- Turret and mounted weapons (D78): they turn toward the aim, but only
+			-- within a 180-degree arc in front of the hull. The hull turns to cover
+			-- the rest (InputController), so the guns never point through it.
+			if rig and #rig.yaw > 0 then
+				local rel = 0
+				if v.hasAim then
+					local look = root.CFrame:VectorToObjectSpace(Vector3.new(math.cos(v.angle), 0, math.sin(v.angle)))
+					rel = math.clamp(math.atan2(-look.X, -look.Z), -SWIVEL, SWIVEL)
+				end
+				local turn = CFrame.Angles(0, rel, 0)
+				for _, m in rig.yaw do
+					m.C0 = baseOf(m) * turn
+				end
 			end
 
-			-- Attack visuals: the Brawler's saw spins and the Scorcher's flame jets
-			-- while the robot is attacking.
-			local attacking = model:GetAttribute("Firing") == true
+			-- Recoil (D78): each shot slides the gun back and lifts the muzzle, then it
+			-- settles. The Scorcher's nozzle shudders under pressure instead.
+			if rig and rig.gun and rig.gunPart then
+				local gp = rig.gunPart
+				local settle = gp:GetAttribute("Settle") or 0.1
+				v.kick = math.max(0, v.kick - dt / settle)
+				local k = v.kick * v.kick
+				local shudder = if attacking and model:GetAttribute("Chassis") == "scorcher" then (math.random() - 0.5) * 0.06 else 0
+				rig.gun.C0 = baseOf(rig.gun) * CFrame.new(shudder, shudder, k * (gp:GetAttribute("Slide") or 0) * scale) * CFrame.Angles(k * (gp:GetAttribute("Climb") or 0), 0, 0)
+			end
+
+			-- Heat (Scorcher's nozzle bands and exhaust tips): glows while firing, cools after.
+			if rig and #rig.heat > 0 then
+				v.heat = math.clamp(v.heat + dt * (if attacking then 1.2 else -0.5), 0, 1)
+				local c = HEAT_COLD:Lerp(HEAT_HOT, v.heat)
+				for _, part in rig.heat do
+					part.Color = c
+					part.Material = if v.heat > 0.15 or part.Name == "NozzleTip" or part.Name == "StackTip" then Enum.Material.Neon else Enum.Material.Metal
+				end
+			end
+
+			-- Blinking lamps: antenna tips, beacons, the Bomber's fuse and core.
+			if rig then
+				local t = os.clock()
+				for _, part in rig.blink do
+					local hz = part:GetAttribute("Blink") or 1
+					part.Transparency = if (t * hz) % 1 < 0.5 then 0 else 0.7
+				end
+			end
+
+			-- Attack loops: the flamethrower roars and the saw screams while attacking.
+			if rig and rig.flameLoop then
+				local on = attacking
+				if rig.flameLoop.Playing ~= on then
+					rig.flameLoop.Playing = on
+				end
+			end
+
+			-- Saw: spins up when attacking and winds down after (it never snaps).
 			local saw = body and body:FindFirstChild("Saw")
 			local sawMotor = saw and saw:FindFirstChild("SawMotor") :: Motor6D?
 			if sawMotor then
-				local base = sawBase[sawMotor]
-				if not base then
-					base = sawMotor.C0
-					sawBase[sawMotor] = base
+				v.sawRate += ((if attacking then 32 else 3) - v.sawRate) * math.min(1, dt * 4)
+				v.spin += dt * v.sawRate
+				sawMotor.C0 = baseOf(sawMotor) * CFrame.Angles(v.spin, 0, 0)
+				if rig and rig.sawLoop then
+					if not rig.sawLoop.Playing then
+						rig.sawLoop.Playing = true
+					end
+					rig.sawLoop.Volume = 0.08 + 0.32 * (v.sawRate / 32)
+					rig.sawLoop.PlaybackSpeed = 0.7 + 0.4 * (v.sawRate / 32)
 				end
-				v.spin += dt * (if attacking then 30 else 2)
-				sawMotor.C0 = base * CFrame.Angles(v.spin, 0, 0)
 			end
 			-- Battle Axe: a full 360 sweep round the robot per swing while attacking (D71).
 			local swing = body and body:FindFirstChild("Swing")
@@ -416,6 +631,10 @@ function Robots.init(folder: Folder)
 			local flame = nozzle and nozzle:FindFirstChild("Flame") :: ParticleEmitter?
 			if flame and flame.Enabled ~= attacking then
 				flame.Enabled = attacking
+				local pilot = (nozzle :: Instance):FindFirstChild("PilotLight") :: ParticleEmitter?
+				if pilot then
+					pilot.Enabled = not attacking -- the pilot flame hides inside the jet
+				end
 			end
 
 			-- Shield bubble

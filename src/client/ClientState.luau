@@ -13,6 +13,7 @@ local ClientState = {
 	localSkillReadyAt = 0,
 	camMode = "third", -- "third" (default) or "top" (D37)
 	camYaw = 0, -- third-person facing, same angle convention as aim
+	camPitch = nil :: number?, -- third-person camera elevation (radians); nil = Config.Camera.PitchDefault
 	fireButtonHeld = false, -- mobile FIRE button (third-person)
 	cursorFree = false, -- third-person on PC: Left Alt held, cursor unlocked
 	menuOpen = false, -- the Garage is open: the mouse is free
@@ -24,6 +25,7 @@ local ClientState = {
 		shake: (amount: number) -> (),
 		garage: (open: boolean?) -> (),
 		garageRefresh: () -> (),
+		kick: (entityId: number) -> (), -- a shot left this robot's gun (recoil)
 	},
 }
 
