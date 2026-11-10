@@ -74,9 +74,10 @@ return function(test)
 		assert(near(S.damage * Combat2D.splashFactor(ring, ring, S.edge), 150))
 	end)
 
-	test("the small form heals itself back to big in about 12 s (D80)", function()
+	test("the small form heals 1% of max HP a second: back to big in about 35 s (D80)", function()
 		local B = Config.Bomber
+		assert(B.smallRegenPerSecond == 0.01, "1% a second")
 		local secs = (B.rebuildAt - B.hpAfter) / B.smallRegenPerSecond
-		assert(secs >= 10 and secs <= 14, "rebuild takes " .. secs .. " s")
+		assert(secs >= 33 and secs <= 37, "rebuild takes " .. secs .. " s")
 	end)
 end

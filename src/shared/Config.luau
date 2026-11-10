@@ -343,7 +343,7 @@ Config.Hazards = {
 -- Bomber forms (D70): HP left after detonating (fraction of max, if higher), and the
 -- HP fraction that rebuilds the bombs and makes it big again. The small form heals
 -- smallRegenPerSecond of max HP per second, the one exception to D33 (D80).
-Config.Bomber = { hpAfter = 0.25, rebuildAt = 0.6, smallRegenPerSecond = 0.03 }
+Config.Bomber = { hpAfter = 0.25, rebuildAt = 0.6, smallRegenPerSecond = 0.01 }
 
 -- Health never regenerates (D33), except the small Bomber (D80). Armor comes only from the Armor Plating card.
 Config.Armor = {
