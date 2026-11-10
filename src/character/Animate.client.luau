@@ -1,0 +1,3 @@
+-- Intentionally empty. A script named "Animate" in StarterCharacterScripts stops
+-- Roblox from inserting its default avatar animation script, which expects limbs
+-- this robot does not have.

@@ -1,0 +1,113 @@
+-- Shared server state: every robot in the arena (players and debug dummies) and
+-- the hooks that let services call each other without circular requires.
+
+local World = {}
+
+export type Entity = {
+	id: number,
+	player: Player?,
+	isDummy: boolean,
+	isBoss: boolean?, -- Phase 4b (D74)
+	hitBy: { [number]: boolean }?, -- boss: entity ids of everyone who damaged it
+	bossScale: number?,
+	bossMaxHp: number?,
+	name: string,
+	generation: number, -- bumps on every spawn; stale async work compares it
+	model: Model?,
+	root: BasePart?,
+	humanoid: Humanoid?,
+	alive: boolean,
+
+	hp: number,
+	armor: number, -- from Armor Plating; regenerates (D33)
+	tempArmor: number, -- from an Armor Pod; expires at tempArmorUntil
+	tempArmorUntil: number,
+	regenUntil: number, -- Regen Pod heal-over-time window
+	regenRate: number, -- HP per second while regenerating
+	bonusHp: number, -- Fortify Pod: flat extra max HP until bonusHpUntil (D54)
+	bonusHpUntil: number,
+	burnUntil: number, -- Scorcher flames keep burning (D44)
+	burnDps: number,
+	burnSourceId: number?,
+	burnAcc: number,
+	pushGrantAt: number, -- last knockback, so Guard allows the movement
+	pushRoom: number,
+	chassisId: string, -- which robot (Chassis.luau)
+	visualScale: number, -- body size, stepped every 5 levels
+	level: number,
+	xp: number, -- xp inside the current level
+	totalXp: number, -- earned this life
+	score: number,
+	build: any,
+	stats: any,
+	rng: Random,
+
+	offer: { id: number, cards: { any } }?,
+	pendingOffers: number,
+	nextOfferId: number,
+
+	aim: number,
+	firing: boolean,
+	nextFire: { [string]: number },
+	liveProjectiles: number,
+
+	protectedUntil: number,
+	shieldUntil: number,
+	fieldUntil: number, -- Null Field (D68)
+	fieldRadius: number,
+	slowFactor: number, -- walk speed factor from enemy fields and trap pins (1 = not slowed)
+	rootedUntil: number, -- Spike Traps pin (D69)
+	netUntil: number, -- hit by a Bomber net (D70)
+	stunnedUntil: number, -- flipped: can't attack (D72)
+	guardHp: number, -- Shield Generator front shield (D69)
+	guardHitAt: number,
+	skillReadyAt: number,
+	dashGrantAt: number,
+	lastHitAt: number,
+	lastDamagerId: number?,
+	lastDamageAt: number,
+	comebackTarget: number?,
+	god: boolean,
+	lastValidPos: Vector3?,
+	dirty: boolean,
+}
+
+World.entities = {} :: { [number]: Entity }
+World.byPlayer = {} :: { [Player]: Entity }
+
+local nextId = 0
+function World.newId(): number
+	nextId += 1
+	return nextId
+end
+
+function World.position(e: Entity): (number, number)
+	local root = e.root
+	if root then
+		local p = root.Position
+		return p.X, p.Z
+	end
+	return 0, 0
+end
+
+function World.hitRadius(e: Entity, config): number
+	return if e.stats then e.stats.hitRadius else config.Robot.HitboxRadius
+end
+
+-- Filled in by the services at boot (see init.server.luau).
+World.hooks = {} :: {
+	onKill: (victim: Entity, killer: Entity?) -> (),
+	addXp: (e: Entity, amount: number, source: string) -> (),
+	markDirty: (e: Entity) -> (),
+	spill: (x: number, z: number, count: number, value: number) -> (),
+	refreshStats: (e: Entity) -> (),
+	spawnDummy: (x: number, z: number, opts: any?) -> (),
+	consumeDash: (e: Entity) -> (),
+	applyPod: (e: Entity, kind: string) -> (),
+	spawnPod: (kind: string, x: number, z: number) -> (),
+	setSmall: (e: Entity, small: boolean) -> (),
+	addCoins: (e: Entity, amount: number) -> (),
+	bossDied: (e: Entity, x: number, z: number) -> (),
+}
+
+return World
