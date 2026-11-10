@@ -309,6 +309,45 @@ Config.Bosses = {
 	},
 }
 
+-- Maps (D79, D81, 09-environment-bible.md). Boss fights happen in the boss's own
+-- arena; a win leaves its biome on the overworld for Bosses.hazardDuration s.
+-- Timings: fade out, swap, fade in; victory window; revert warning before going home.
+-- Colours are { r, g, b } (0-255) so Lune can load this file; Color3 is built where used.
+local function rgb(r: number, g: number, b: number): { number }
+	return { r, g, b }
+end
+local function hex(h: number): { number }
+	return rgb(bit32.rshift(h, 16), bit32.band(bit32.rshift(h, 8), 255), bit32.band(h, 255))
+end
+Config.Maps = {
+	fade = 0.5,
+	victory = 6,
+	revertWarning = 20,
+	arenaFor = { forge = "arena_forge", inferno = "arena_inferno", grinder = "arena_grinder" },
+	biomeFor = { forge = "forge_highlands", inferno = "inferno_fields", grinder = "grinder_scrapyard" },
+	-- Lava (Q3): damage over time while inside, plus burning and a slow.
+	lava = { dps = 30, burnDps = 8, burnDuration = 2, slow = 0.6 },
+	-- Dying in a boss arena (Q2): keep your level, lose this share of the XP to your next level.
+	arenaDeath = { respawn = 5, xpLoss = 0.25 },
+	-- Arena health pads: a Health Pod reappears on each pad every `every` s.
+	pads = { every = 30 },
+	-- The colour each map fades through when you arrive (bible section 12).
+	fadeColor = {
+		grassland = hex(0x3C5A28), forge_highlands = hex(0x5A3010), inferno_fields = hex(0x5A1408),
+		grinder_scrapyard = hex(0x4A3A10), arena_forge = hex(0x5A3010), arena_inferno = hex(0x5A1408), arena_grinder = hex(0x4A3A10),
+	},
+	-- Lighting per map (bible section 10). Grassland keeps its current values.
+	lighting = {
+		grassland = { clock = 14.5, brightness = 2.4, ambient = rgb(135, 140, 150), atmosphere = { 0.3, 0.2, rgb(205, 200, 185), rgb(110, 130, 160), 0.15, 1.4 }, cc = { 0.02, 0.06, 0.12, hex(0xFFFFFF) }, bloom = { 0.5, 24, 1.6 }, sunRays = 0.06 },
+		forge_highlands = { clock = 16.5, brightness = 2.2, ambient = hex(0x8C8278), atmosphere = { 0.38, 0.1, hex(0xC8B8A0), hex(0x7A6A58), 0.2, 1.8 }, cc = { 0, 0.10, 0.05, hex(0xFFF0DC) }, bloom = { 0.6, 24, 1.3 }, sunRays = 0.10 },
+		inferno_fields = { clock = 18.5, brightness = 1.6, ambient = hex(0x6A3C2C), atmosphere = { 0.42, 0.15, hex(0x8C4A2A), hex(0x3C1408), 0.3, 2.0 }, cc = { 0, 0.12, 0.15, hex(0xFFE0CC) }, bloom = { 0.8, 28, 1.1 }, sunRays = 0 },
+		grinder_scrapyard = { clock = 19.5, brightness = 1.5, ambient = hex(0x5A5C60), atmosphere = { 0.40, 0.1, hex(0x8A8070), hex(0x3A3A40), 0, 1.6 }, cc = { 0.02, 0.12, -0.08, hex(0xFFFFFF) }, bloom = { 0.6, 24, 1.2 }, sunRays = 0 },
+		arena_forge = { clock = 0, brightness = 1.0, ambient = hex(0x5A4234), atmosphere = { 0.40, 0, hex(0x6A3A20), hex(0x2A1408), 0, 2.0 }, cc = { 0, 0.12, 0.05, hex(0xFFE2C8) }, bloom = { 0.8, 28, 1.2 }, sunRays = 0 },
+		arena_inferno = { clock = 18.8, brightness = 1.4, ambient = hex(0x5A2A1E), atmosphere = { 0.45, 0.1, hex(0x7A3018), hex(0x2A0E08), 0.3, 2.4 }, cc = { 0, 0.12, 0.20, hex(0xFFD8C0) }, bloom = { 0.9, 28, 1.1 }, sunRays = 0 },
+		arena_grinder = { clock = 21, brightness = 1.2, ambient = hex(0x5E6268), atmosphere = { 0.35, 0, hex(0x606A70), hex(0x30343A), 0, 1.4 }, cc = { 0, 0.15, -0.10, hex(0xFFFFFF) }, bloom = { 0.6, 24, 1.3 }, sunRays = 0 },
+	},
+}
+
 -- Arena hazards a boss leaves behind (D39). Cycles repeat; each spot starts at its
 -- own offset so they don't all fire together.
 Config.Hazards = {

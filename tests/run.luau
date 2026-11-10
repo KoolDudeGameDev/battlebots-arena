@@ -31,6 +31,7 @@ local suites = {
 	require("./Shop.spec"),
 	require("./Bosses.spec"),
 	require("./MapQuery.spec"),
+	require("./MapFlow.spec"),
 }
 
 for _, suite in suites do
