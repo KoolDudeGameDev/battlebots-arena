@@ -14,12 +14,12 @@ local Combat2D = require(Shared.Combat2D)
 local Vfx = require(script.Parent.Vfx)
 local Sfx = require(script.Parent.Sfx)
 local ClientState = require(script.Parent.ClientState)
-local MapLayout = require(Shared.MapLayout)
+local MapLayouts = require(Shared.MapLayouts)
+local MapQuery = require(Shared.MapQuery)
 
 local Projectiles = {}
 
 local HEIGHT = 3
-local HALF = Config.Arena.HalfSize
 local RECORD = 37 -- must match SPAWN_RECORD in server Combat
 local FIELD_SLOW = Config.Skills.skl_nullfield.projectileSlow
 local NET = Config.Weapons.netgun
@@ -43,9 +43,22 @@ local live: { [number]: Live } = {}
 local pools: { [number]: { Part } } = {}
 local folder: Folder
 local player = Players.LocalPlayer
--- The same walls, pillars, trees and rocks the server uses (MapLayout).
-local covers = MapLayout.boxes()
-local circles = MapLayout.circles()
+-- The same cover the server uses: the current map's layout (D81), minus the
+-- pieces a boss has smashed.
+local Workspace = game:GetService("Workspace")
+local map = MapLayouts[Workspace:GetAttribute("Map") or "grassland"] or MapLayouts.grassland
+local broken: { [number]: boolean } = {}
+Workspace:GetAttributeChangedSignal("Map"):Connect(function()
+	map = MapLayouts[Workspace:GetAttribute("Map")] or MapLayouts.grassland
+	broken = {}
+end)
+Remotes.CoverBroken.OnClientEvent:Connect(function(kind: any, id: any)
+	if type(id) == "number" then
+		broken[if kind == "circle" then MapQuery.CIRCLE_KEY + id else id] = true
+	end
+end)
+-- What a shot sounds and looks like when it hits each kind of cover (Vfx.impact styles).
+local SURFACE = { wood = "wood", metal = "robot", scrap = "robot" }
 
 -- Shots are pooled per kind, so each kind's trail and exhaust are built once.
 local function acquire(code: number): Part
@@ -264,26 +277,16 @@ function Projectiles.init(fx: Folder)
 			local slow = Combat2D.fieldFactor(l.x, l.z, l.owner, fields, FIELD_SLOW)
 			local step = math.min(l.speed * dt * slow, l.remaining)
 			local x2, z2 = l.x + l.dx * step, l.z + l.dz * step
-			local blocked = math.abs(x2) > HALF or math.abs(z2) > HALF
-			local surface = "stone" -- what it hit: trees are wood, everything else stone (D75)
+			local blocked = math.abs(x2) > map.half or math.abs(z2) > map.half
+			local surface = "stone" -- what it hit (D75): wood, metal sparks, or stone
 			if not blocked then
-				for _, b in covers do
-					if Combat2D.segmentBox(l.x, l.z, x2, z2, b.minX, b.minZ, b.maxX, b.maxZ) then
-						blocked = true
-						break
-					end
+				local t, kind = MapQuery.blockedAt(map, l.x, l.z, x2, z2, 0, broken)
+				if t then
+					blocked = true
+					surface = SURFACE[kind or ""] or "stone"
 				end
 			end
-			if not blocked then
-				for _, c in circles do
-					if Combat2D.segmentCircle(l.x, l.z, x2, z2, c.x, c.z, c.r) then
-						blocked = true
-						surface = if c.kind == "tree" then "wood" else "stone"
-						break
-					end
-				end
-			end
-			if blocked and l.code ~= 3 and l.code ~= NET_CODE then
+			if blocked and not (LOOKS[l.code] or LOOKS[1]).rocket and l.code ~= NET_CODE then
 				Vfx.impact(x2, z2, surface, l.dx, l.dz)
 			end
 			l.x, l.z = x2, z2

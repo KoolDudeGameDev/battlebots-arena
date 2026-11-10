@@ -521,6 +521,67 @@ local function buildBoss()
 		TextTransparency = 1,
 		TextStrokeColor3 = Color3.new(0, 0, 0),
 	})
+	-- The map flow (D81): which map is up and how long it lasts.
+	local Workspace = game:GetService("Workspace")
+	local mapLabel = text(gui, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 94),
+		Size = UDim2.new(0.6, 0, 0, 22),
+		Text = "",
+		Font = Enum.Font.GothamBold,
+		TextSize = if isTouch then 14 else 17,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextStrokeTransparency = 0.5,
+		TextStrokeColor3 = Color3.new(0, 0, 0),
+	})
+	local function clock(seconds: number): string
+		local s2 = math.max(0, math.floor(seconds))
+		return string.format("%d:%02d", s2 // 60, s2 % 60)
+	end
+	RunService.Heartbeat:Connect(function()
+		local phase = Workspace:GetAttribute("MapPhase") or "grassland"
+		local left = ((Workspace:GetAttribute("MapEndsAt") or 0) :: number) - Workspace:GetServerTimeNow()
+		local display = Workspace:GetAttribute("MapDisplay") or ""
+		local boss = Workspace:GetAttribute("MapBoss") or "Boss"
+		mapLabel.Text = if phase == "warning" then `{boss} approaches · {clock(left)}`
+			elseif phase == "arena" then `{display} · {boss} leaves in {clock(left)}`
+			elseif phase == "victory" then `Victory! Back to the overworld in {clock(left)}`
+			elseif phase == "biome" then `{display} · {clock(left)}`
+			elseif phase == "revert" then `{display} fades in {clock(left)}`
+			else ""
+	end)
+
+	-- The swap fade (D81): to the new map's colour and back, 0.5 s each way.
+	local fade = new("Frame", {
+		Position = UDim2.fromScale(-0.1, -0.1),
+		Size = UDim2.fromScale(1.2, 1.2),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ZIndex = 50,
+	}, gui)
+	local fadeId = 0
+	local function fadeIn(id: number)
+		if fadeId == id then
+			TweenService:Create(fade, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+		end
+	end
+	Remotes.MapSwap.OnClientEvent:Connect(function(color)
+		fadeId += 1
+		local id = fadeId
+		fade.BackgroundColor3 = if typeof(color) == "Color3" then color else Color3.new(0, 0, 0)
+		TweenService:Create(fade, TweenInfo.new(0.5), { BackgroundTransparency = 0 }):Play()
+		local conn
+		conn = Workspace:GetAttributeChangedSignal("Map"):Connect(function()
+			conn:Disconnect()
+			task.delay(0.15, fadeIn, id)
+		end)
+		task.delay(2, function() -- never stay dark, even if the map didn't change
+			conn:Disconnect()
+			fadeIn(id)
+		end)
+	end)
+
 	local shownAt = 0
 	Remotes.Announce.OnClientEvent:Connect(function(message)
 		if type(message) ~= "string" then

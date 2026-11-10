@@ -19,9 +19,10 @@ return function(test)
 	end)
 
 	test("circles block, and a shot's radius grows them", function()
-		local map = { boxes = {}, circles = { { id = 1, x = 0, z = 5, r = 2, h = 6 } }, lava = {} }
+		local map = { boxes = {}, circles = { { id = 1, x = 0, z = 5, r = 2, h = 6, kind = "wood" } }, lava = {} }
 		assert(MapQuery.blockedAt(map, -10, 0, 10, 0, 0) == nil)
-		assert(MapQuery.blockedAt(map, -10, 0, 10, 0, 3.5) ~= nil)
+		local t, kind = MapQuery.blockedAt(map, -10, 0, 10, 0, 3.5)
+		assert(t ~= nil and kind == "wood", "reports what it hit: " .. tostring(kind))
 	end)
 
 	test("broken pieces no longer block", function()

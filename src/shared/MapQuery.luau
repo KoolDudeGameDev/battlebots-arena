@@ -69,14 +69,15 @@ local function inBox(x: number, z: number, b: any, margin: number): boolean
 	return math.abs(u) <= b.hu + margin and math.abs(v) <= b.hv + margin
 end
 
--- How far along (0..1) the segment first meets cover grown by pad, or nil if clear.
-function MapQuery.blockedAt(map: any, x1: number, z1: number, x2: number, z2: number, pad: number, broken: { [number]: boolean }?): number?
-	local best: number? = nil
+-- How far along (0..1) the segment first meets cover grown by pad, or nil if clear,
+-- and the kind of piece it meets (stone, wood, metal, scrap, obsidian).
+function MapQuery.blockedAt(map: any, x1: number, z1: number, x2: number, z2: number, pad: number, broken: { [number]: boolean }?): (number?, string?)
+	local best: number?, kind: string? = nil, nil
 	for _, b in map.boxes do
 		if not (broken and broken[b.id]) then
 			local t = segmentBox(x1, z1, x2, z2, b, pad)
 			if t and (best == nil or t < best) then
-				best = t
+				best, kind = t, b.kind
 			end
 		end
 	end
@@ -84,11 +85,11 @@ function MapQuery.blockedAt(map: any, x1: number, z1: number, x2: number, z2: nu
 		if not (broken and broken[MapQuery.CIRCLE_KEY + c.id]) then
 			local t = segmentCircle(x1, z1, x2, z2, c.x, c.z, c.r + pad)
 			if t and (best == nil or t < best) then
-				best = t
+				best, kind = t, c.kind
 			end
 		end
 	end
-	return best
+	return best, kind
 end
 
 function MapQuery.inCover(map: any, x: number, z: number, margin: number, broken: { [number]: boolean }?): boolean
