@@ -115,16 +115,16 @@ Config.Weapons = {
 	},
 	-- Bombard's primary (D44, D45): rockets launch slow and accelerate.
 	launcher = {
-		code = 3,
+		code = 7, -- its own look: twice the Rocket Pod's size (D80)
 		damage = 26,
 		splashDamage = 22,
-		splashRadius = 12, -- bigger blast (D78)
+		splashRadius = 24, -- doubled (D80)
 		fireRate = 1.2,
 		launchSpeed = 40,
 		speed = 110, -- top speed
 		accel = 160,
 		range = 55,
-		radius = 0.7,
+		radius = 1.4, -- doubled with the splash (D80)
 		knockback = 6, -- studs of push on a scale-1 robot at the blast centre
 	},
 	-- Rare variants (D67). The laser is a hitscan beam: damage per tick, 10 ticks/s
@@ -133,7 +133,7 @@ Config.Weapons = {
 	axe = { damage = 38, fireRate = 1.8, reach = 7, arcDegrees = 360, knockback = 3 }, -- full 360 sweep round the robot (D71)
 	-- Overhead 180-degree smash (D71): an area of smashRadius centred `reach` studs
 	-- beyond your hitbox, in the aim direction, landing `windup` s after the swing starts.
-	hammer = { damage = 80, fireRate = 0.8, reach = 4, smashRadius = 5, knockback = 12, windup = 0.2 },
+	hammer = { damage = 80, fireRate = 0.8, reach = 4, smashRadius = 8, knockback = 12, windup = 0.2 },
 	buzzsaw = { damage = 26, fireRate = 2.5, reach = 5.5, arcDegrees = 100, knockback = 2 },
 	flamer = { damagePerTick = 3.8, fireRate = 10, range = 16, coneDegrees = 50, burnDps = 8, burnDuration = 3 },
 	gatling = {
@@ -220,10 +220,12 @@ Config.Skills = {
 	skl_dash = { distance = 20, duration = 0.2, cooldown = 6, cooldownPerRank = -1 },
 	skl_shield = { duration = 1.5, durationPerRank = 0.5, cooldown = 12 },
 	-- Flipper (D72): flips every robot in front into the air; they can't drive or attack
-	-- for flipTime (+ per rank) and are thrown back.
-	skl_flipper = { reach = 6, arcDegrees = 150, flipTime = 1.2, flipTimePerRank = 0.3, knockback = 12, cooldown = 10, cooldownPerRank = -1 },
+	-- for flipTime (+ per rank) and are thrown back, flipHeight studs up for flipAirTime s (D80).
+	skl_flipper = { reach = 6, arcDegrees = 150, flipHeight = 12, flipAirTime = 1.0, flipTime = 1.2, flipTimePerRank = 0.3, knockback = 12, cooldown = 10, cooldownPerRank = -1 },
 	-- Bomber's built-in skill (D70): only in big form. Splash damage with falloff.
-	skl_bomb = { cooldown = 2, radius = 14, radiusPerRank = 3, damage = 90, damagePerRank = 0.25, knockback = 16 },
+	-- Detonate (D80): the blast fills the drawn attack ring (Stats.attackRange); damage at the
+	-- ring's edge is `edge` of the centre damage.
+	skl_bomb = { cooldown = 2, damage = 300, edge = 0.5, damagePerRank = 0.25, knockback = 16 },
 	-- Null Field (D68): a big bubble around you; enemy shots inside crawl (dodgeable)
 	-- and enemy robots inside drive at half speed. Beams, flames and melee are not slowed.
 	skl_nullfield = { radius = 18, radiusPerRank = 4, duration = 3, durationPerRank = 1, cooldown = 15, projectileSlow = 0.25, robotSlow = 0.5 },
@@ -291,7 +293,7 @@ Config.Bosses = {
 			speed = 8,
 			hazard = "hammers",
 			-- A red warning circle, then the hammer lands on it.
-			attack = { kind = "smash", every = 3, windup = 0.8, reach = 6, radius = 12, damage = 45, knockback = 20 },
+			attack = { kind = "smash", every = 3, windup = 0.8, reach = 6, radius = 16, damage = 45, knockback = 20 } -- radius 12 -> 16 (D80),
 		},
 		grinder = {
 			name = "Grinder",
@@ -339,18 +341,19 @@ Config.Hazards = {
 }
 
 -- Bomber forms (D70): HP left after detonating (fraction of max, if higher), and the
--- HP fraction that rebuilds the bombs and makes it big again.
-Config.Bomber = { hpAfter = 0.25, rebuildAt = 0.6 }
+-- HP fraction that rebuilds the bombs and makes it big again. The small form heals
+-- smallRegenPerSecond of max HP per second, the one exception to D33 (D80).
+Config.Bomber = { hpAfter = 0.25, rebuildAt = 0.6, smallRegenPerSecond = 0.03 }
 
--- Health never regenerates (D33). Armor comes only from the Armor Plating card.
+-- Health never regenerates (D33), except the small Bomber (D80). Armor comes only from the Armor Plating card.
 Config.Armor = {
 	firstStack = 30,
 	perStack = 20,
 	deflectBase = 0.10,
 	deflectPerStack = 0.05,
 	deflectCap = 0.30,
-	regenDelay = 4, -- seconds without taking damage
-	regenPerSecond = 0.15, -- fraction of max armor
+	regenDelay = 4.5, -- seconds without taking damage (D80)
+	regenPerSecond = 0.10, -- fraction of max armor (D80)
 	tempDeflect = 0.10, -- deflect chance of Armor Pod armor without plating
 }
 

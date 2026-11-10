@@ -74,6 +74,7 @@ type View = {
 local views: { [Model]: View } = {}
 local sawBase: { [Motor6D]: CFrame } = {} -- each saw's resting C0
 local SMASH_HUBS = { "SmashHub" } -- the Sledgehammer main weapon
+local SMASH_REST, SMASH_LIFT = math.rad(100), math.rad(130) -- upright in front, then lifted back (D80)
 setmetatable(sawBase :: any, { __mode = "k" }) -- forget saws that were rebuilt
 
 local function bandColor(level: number): Color3
@@ -594,9 +595,9 @@ function Robots.init(folder: Folder)
 				v.sideSpin += dt * 25
 				sideMotor.C0 = base * CFrame.Angles(v.sideSpin, 0, 0)
 			end
-			-- Sledgehammer (D71): raised behind at rest (180 degrees);
-			-- each smash swings over the top onto the ground in front in 0.2 s (the
-			-- server's windup), holds, then lifts back up for the next one.
+			-- Sledgehammer (D80): held upright in front at rest (SMASH_REST); each smash
+			-- lifts it a little further back in 0.1 s, slams it onto the ground in front
+			-- by 0.2 s (the server's windup), holds, then raises it back to rest.
 			for _, hubName in SMASH_HUBS do
 				local hub = body and body:FindFirstChild(hubName)
 				local hubMotor = hub and hub:FindFirstChild(hubName .. "Motor") :: Motor6D?
@@ -618,7 +619,12 @@ function Robots.init(folder: Folder)
 					end
 					st.t += dt
 					local t = st.t
-					local a = if t < 0.2 then math.pi * (1 - (t / 0.2) ^ 2) elseif t < 0.35 then 0 elseif t < 0.85 then math.pi * ((t - 0.35) / 0.5) else math.pi
+					local a = if t < 0.1
+						then SMASH_REST + (SMASH_LIFT - SMASH_REST) * math.sin(t / 0.1 * math.pi / 2)
+						elseif t < 0.2 then SMASH_LIFT * (1 - ((t - 0.1) / 0.1) ^ 2)
+						elseif t < 0.35 then 0
+						elseif t < 0.85 then SMASH_REST * ((t - 0.35) / 0.5)
+						else SMASH_REST
 					hubMotor.C0 = base * CFrame.Angles(a, 0, 0)
 				end
 			end

@@ -98,6 +98,24 @@ function Stats.underdogFactor(config: any, attackerLevel: number, targetLevel: n
 	return 1 + math.min(u.cap, gap * u.perLevel)
 end
 
+-- How far the main weapon reaches from the robot's centre: the faint ring drawn
+-- around every robot, and the Bomber's blast radius (D80). `primary` is the live
+-- primary (a variant card's, else the robot's own); build.stacks reads Spread Shot.
+function Stats.attackRange(config: any, primary: any, stats: Stats, build: any): number
+	if not primary then
+		return 0
+	end
+	local w = config.Weapons[primary.weapon]
+	if primary.kind == "melee" then
+		-- Sledgehammer: the far edge of its smash area (D71).
+		return (w.reach + (w.smashRadius or 0)) * stats.scale * stats.rangeMult + stats.hitRadius
+	end
+	local spread = (build.stacks.mod_spread or 0) > 0 and primary.kind ~= "cone"
+	local reach = (1.2 + config.Robot.BarrelLength) * stats.scale
+	return w.range * stats.rangeMult * (if spread then config.Barrels.spreadRange else 1)
+		+ (if primary.kind == "cone" then stats.hitRadius else reach)
+end
+
 -- Damage per bullet for n barrels, before global stats.
 function Stats.barrelFactor(config: any, barrels: number): number
 	local f = config.Barrels.damageFactor

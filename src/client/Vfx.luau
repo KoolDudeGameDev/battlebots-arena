@@ -165,9 +165,37 @@ end
 
 local function shockwave(x: number, z: number, radius: number, color: Color3)
 	local p = disc(x, z, 1, color, Enum.Material.Neon, 0.35, 0.35)
-	local t = TweenService:Create(p, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.new(0.12, radius * 2.4, radius * 2.4), Transparency = 1 })
+	local t = TweenService:Create(p, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.new(0.12, radius * 2, radius * 2), Transparency = 1 }) -- ends exactly at the hit edge (D80)
 	t.Completed:Once(function()
 		p:Destroy()
+	end)
+	t:Play()
+end
+
+-- A thin ring on the ground at the exact damage radius, held for a moment so the
+-- blast's reach is readable (D80).
+local function edgeRing(x: number, z: number, radius: number, color: Color3)
+	local anchor = Instance.new("Part")
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.Size = Vector3.one * 0.2
+	anchor.CFrame = CFrame.new(x, 0.4, z)
+	anchor.Parent = folder
+	local ring = Instance.new("CylinderHandleAdornment")
+	ring.Adornee = anchor
+	ring.Radius = radius
+	ring.InnerRadius = math.max(0, radius - 0.6)
+	ring.Height = 0.08
+	ring.CFrame = CFrame.Angles(math.rad(90), 0, 0)
+	ring.Color3 = color
+	ring.Transparency = 0.2
+	ring.Parent = anchor
+	local t = TweenService:Create(ring, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Transparency = 1 })
+	t.Completed:Once(function()
+		anchor:Destroy()
 	end)
 	t:Play()
 end
@@ -293,6 +321,7 @@ function Vfx.explosion(x: number, z: number, radius: number, big: boolean?)
 	emit("smoke", pos + Vector3.new(0, 1, 0), 6 * k)
 	emit("sparks", pos, 12 * k)
 	shockwave(x, z, radius, Color3.fromRGB(255, 170, 90))
+	edgeRing(x, z, radius, Color3.fromRGB(255, 150, 60))
 	mark(x, z, radius * 0.7, Color3.fromRGB(25, 22, 20), 6)
 	debris(pos, math.floor(5 * k), if big then METAL else DIRT, if big then Enum.Material.Metal else Enum.Material.Ground, 0.6, 22)
 	shake(d, if big then 0.5 else 0.35, 60)

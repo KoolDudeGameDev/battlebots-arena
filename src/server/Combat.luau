@@ -307,7 +307,8 @@ local function flipAnchored(target: World.Entity, fromX: number, fromZ: number, 
 	local start = root.CFrame
 	local push = Vector3.new(start.Position.X - fromX, 0, start.Position.Z - fromZ)
 	local axis = if push.Magnitude > 0.05 then push.Unit:Cross(Vector3.yAxis) * -1 else start.RightVector
-	local airTime = math.min(0.8, duration)
+	local F = Config.Skills.skl_flipper
+	local airTime = math.min(F.flipAirTime, duration)
 	local gen = target.generation
 	local t = 0
 	local conn: RBXScriptConnection
@@ -318,7 +319,7 @@ local function flipAnchored(target: World.Entity, fromX: number, fromZ: number, 
 			conn:Disconnect()
 			return
 		end
-		root.CFrame = CFrame.new(start.Position + Vector3.new(0, 6 * 4 * k * (1 - k), 0)) * CFrame.fromAxisAngle(axis, k * 2 * math.pi) * start.Rotation
+		root.CFrame = CFrame.new(start.Position + Vector3.new(0, F.flipHeight * 4 * k * (1 - k), 0)) * CFrame.fromAxisAngle(axis, k * 2 * math.pi) * start.Rotation
 		if k >= 1 then
 			conn:Disconnect()
 			root.CFrame = start
@@ -1262,13 +1263,15 @@ local function useSkill(e: World.Entity)
 		local S = Config.Skills.skl_bomb
 		local rank = e.build.skillRank
 		local x, z = World.position(e)
-		local radius = (S.radius + S.radiusPerRank * (rank - 1)) * e.stats.scale
+		-- The blast fills the ring drawn around the Bomber (D80).
+		local c = Chassis.byId[e.chassisId] or Chassis.byId[Chassis.default]
+		local radius = Stats.attackRange(Config, Upgrades.primaryFor(e.build.stacks) or c.primary, e.stats, e.build)
 		local damage = S.damage * (1 + S.damagePerRank * (rank - 1)) * e.stats.damageMult
 		Remotes.Effect:FireAllClients("explosion", x, z, radius)
 		for _, tg in targets(e.id, true) do
 			local dist = math.sqrt((tg.x - x) ^ 2 + (tg.z - z) ^ 2)
 			if dist <= radius + tg.r then
-				local falloff = Combat2D.splashFactor(math.max(0, dist - tg.r), radius, Config.Combat.SplashEdge)
+				local falloff = Combat2D.splashFactor(math.max(0, dist - tg.r), radius, S.edge)
 				if tg.e then
 					Combat.damage(tg.e, damage * falloff, e, true, tg.x, tg.z)
 					knock(tg.e, x, z, S.knockback * falloff)
@@ -1308,8 +1311,13 @@ local function useSkill(e: World.Entity)
 end
 
 -- Armor regen, Regen Pod healing, Armor Pod expiry and burn. Health itself
--- never regenerates (D33).
+-- never regenerates (D33), except the small Bomber (D80).
 local function tickSustain(e: World.Entity, t: number, dt: number)
+	if e.build.small and e.hp > 0 and e.hp < e.stats.maxHp then
+		-- The small Bomber heals itself, the one exception to D33 (D80).
+		e.hp = math.min(e.stats.maxHp, e.hp + e.stats.maxHp * Config.Bomber.smallRegenPerSecond * dt)
+		syncHp(e)
+	end
 	if e.build.small and e.hp >= e.stats.maxHp * Config.Bomber.rebuildAt then
 		World.hooks.setSmall(e, false) -- healed: the bombs are back (D70)
 	end

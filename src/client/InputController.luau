@@ -94,7 +94,8 @@ local function flipOver(root: BasePart, push: Vector3, duration: number)
 	end
 	local axis = if push.Magnitude > 0.05 then push.Unit:Cross(Vector3.yAxis) * -1 else root.CFrame.RightVector
 	local start = root.CFrame
-	local airTime = math.min(0.8, duration)
+	local F = Config.Skills.skl_flipper
+	local airTime = math.min(F.flipAirTime, duration)
 	humanoid.PlatformStand = true
 	local t = 0
 	local conn: RBXScriptConnection
@@ -105,7 +106,7 @@ local function flipOver(root: BasePart, push: Vector3, duration: number)
 		end
 		t += dt
 		local k = math.min(1, t / airTime)
-		local height = 6 * 4 * k * (1 - k) -- up and down, 6 studs at the top
+		local height = F.flipHeight * 4 * k * (1 - k) -- up and down, flipHeight at the top
 		local flat = root.Position * Vector3.new(1, 0, 1) + Vector3.new(0, start.Position.Y, 0)
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.CFrame = CFrame.new(flat + Vector3.new(0, height, 0)) * CFrame.fromAxisAngle(axis, k * 2 * math.pi) * start.Rotation

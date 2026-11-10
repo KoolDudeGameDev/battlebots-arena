@@ -29,10 +29,11 @@ local NET_CODE = NET.code
 local LOOKS = {
 	[1] = { size = Vector3.new(0.5, 0.5, 1.8), color = Color3.fromRGB(255, 235, 120), trail = 0.08, sound = "Blaster" }, -- blaster
 	[2] = { size = Vector3.new(0.35, 0.35, 1.2), color = Color3.fromRGB(230, 230, 255), trail = 0.06, sound = "Gatling" }, -- gatling
-	[3] = { size = Vector3.new(0.75, 0.75, 2.4), color = Color3.fromRGB(235, 232, 220), rocket = true, sound = "RocketLaunch" }, -- rockets (D78)
+	[3] = { size = Vector3.new(0.75, 0.75, 2.4), color = Color3.fromRGB(235, 232, 220), rocket = true, sound = "RocketLaunch" }, -- Rocket Pod (D78)
 	[4] = { size = Vector3.new(0.55, 0.55, 2.0), color = Color3.fromRGB(255, 150, 40), trail = 0.1, sound = "Blaster" }, -- ricochet
 	[5] = { size = Vector3.new(0.3, 0.3, 4.5), color = Color3.fromRGB(90, 230, 255), trail = 0.15, sound = "Railgun" }, -- railgun
 	[6] = { size = Vector3.new(3.0, 0.3, 1.2), color = Color3.fromRGB(170, 140, 90), sound = "NetLaunch" }, -- Bomber net (grows as it opens)
+	[7] = { size = Vector3.new(1.5, 1.5, 4.8), color = Color3.fromRGB(235, 232, 220), rocket = true, sound = "RocketLaunch" }, -- Bombard rockets, doubled (D80)
 }
 local MUZZLE_BLEND = 8 -- studs over which a shot drops from its gun's height to the shot plane
 
@@ -83,20 +84,20 @@ local function acquire(code: number): Part
 		fire.Speed = NumberRange.new(6, 10)
 		fire.Lifetime = NumberRange.new(0.08, 0.16)
 		fire.LightEmission = 1
-		fire.Size = NumberSequence.new(1.1, 0.3)
+		fire.Size = NumberSequence.new(look.size.X * 1.45, look.size.X * 0.4)
 		fire.Color = ColorSequence.new(Color3.fromRGB(255, 230, 140), Color3.fromRGB(255, 90, 30))
 		fire.Enabled = false
 		fire.Parent = tail
 		local light = Instance.new("PointLight")
 		light.Color = Color3.fromRGB(255, 150, 60)
-		light.Range = 10
+		light.Range = look.size.X * 13
 		light.Brightness = 2
 		light.Parent = tail
 		local a0 = Instance.new("Attachment")
-		a0.Position = Vector3.new(0, 0.35, look.size.Z / 2)
+		a0.Position = Vector3.new(0, look.size.Y * 0.47, look.size.Z / 2) -- trail as wide as the rocket (D80)
 		a0.Parent = p
 		local a1 = Instance.new("Attachment")
-		a1.Position = Vector3.new(0, -0.35, look.size.Z / 2)
+		a1.Position = Vector3.new(0, -look.size.Y * 0.47, look.size.Z / 2)
 		a1.Parent = p
 		local trail = Instance.new("Trail")
 		trail.Attachment0 = a0
@@ -111,7 +112,7 @@ local function acquire(code: number): Part
 		local nose = Instance.new("SurfaceLight")
 		nose.Face = Enum.NormalId.Front
 		nose.Color = Color3.fromRGB(255, 70, 50)
-		nose.Range = 4
+		nose.Range = look.size.X * 5.3
 		nose.Parent = p
 	elseif look.trail then
 		local a0 = Instance.new("Attachment")

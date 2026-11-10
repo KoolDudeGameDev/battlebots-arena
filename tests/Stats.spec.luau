@@ -38,4 +38,13 @@ return function(test)
 		assert(near(dmg, 8) and near(rate, 8.4), `{dmg} {rate}`)
 		assert(Stats.rocketCount(1) == 1 and Stats.rocketCount(3) == 2 and Stats.rocketCount(5) == 3)
 	end)
+
+	test("attack range: hammer reaches the far edge of its smash, no primary reaches 0 (D80)", function()
+		local s = Stats.compute(Config, { stacks = {} }, 0)
+		local w = Config.Weapons.hammer
+		assert(w.smashRadius == 8, "bigger smash")
+		local r = Stats.attackRange(Config, { kind = "melee", weapon = "hammer" }, s, { stacks = {} })
+		assert(near(r, w.reach + w.smashRadius + s.hitRadius), "hammer " .. r)
+		assert(Stats.attackRange(Config, nil, s, { stacks = {} }) == 0)
+	end)
 end

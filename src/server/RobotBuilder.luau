@@ -210,8 +210,8 @@ local function reachU(build, studs: number): number
 end
 
 -- An overhead hammer on a hub on the turret, built in its impact pose: the head on
--- the ground `impactZ` in front. Clients rotate the hub from 180 degrees (raised
--- behind) to 0 on every smash, counted by the model attribute `counter`.
+-- the ground `impactZ` in front. Clients hold it upright in front at rest, lift it
+-- and slam it to 0 on every smash, counted by the model attribute `counter` (D80).
 local function buildSmashHammer(ctx: Ctx, turret: BasePart, turretY: number, hubName: string, counter: string, pivot: Vector3, impactZ: number, headWidth: number, thick: number)
 	local hub = motorPart(ctx, turret, hubName, Vector3.new(0.6, 0.6, 0.6), pivot, DARK, M.Metal, SHAPE.Ball)
 	hub:SetAttribute("SmashCounter", counter)
@@ -581,12 +581,12 @@ local function buildPrimary(ctx: Ctx, turret: BasePart, chassisId: string, build
 		fade(attach(ctx, hub, "AxeEdge", Vector3.new(0.25, 0.3, 2.4), CFrame.new(2.4, 0, -(len - 1.2)), Color3.fromRGB(205, 210, 215), M.Metal))
 		return
 	end
-	-- Sledgehammer (D71): raised behind on the turret, it smashes 180 degrees over the
-	-- top onto its smash area in front. The head is as wide as the area.
+	-- Sledgehammer (D71, D80): pivots on the front edge of the turret, held upright,
+	-- and slams forward onto its smash area. The head is as wide as the area.
 	if weapon == "hammer" then
 		local def = Config.Weapons.hammer
 		local impactZ = -(R.HitboxRadius + reachU(build, def.reach))
-		buildSmashHammer(ctx, turret, body.turretY, "SmashHub", "Smashes", Vector3.new(0, 1.0, 0.6), impactZ, math.min(3.4, reachU(build, def.smashRadius) * 0.7), 1.3)
+		buildSmashHammer(ctx, turret, body.turretY, "SmashHub", "Smashes", Vector3.new(0, 0.6, -1.2), impactZ, math.min(3.4, reachU(build, def.smashRadius) * 0.7), 1.3)
 		return
 	end
 

@@ -110,19 +110,7 @@ end
 -- How far the robot's main weapon reaches, measured from its centre.
 local function attackRange(e: World.Entity): number
 	local c = Chassis.byId[e.chassisId] or Chassis.byId[Chassis.default]
-	local prim = Upgrades.primaryFor(e.build.stacks) or c.primary
-	if not prim then
-		return 0
-	end
-	local w = Config.Weapons[prim.weapon]
-	local hit = e.stats.hitRadius
-	if prim.kind == "melee" then
-		-- Sledgehammer: the far edge of its smash area (D71).
-		return (w.reach + (w.smashRadius or 0)) * e.stats.scale * e.stats.rangeMult + hit
-	end
-	local spread = (e.build.stacks.mod_spread or 0) > 0 and prim.kind ~= "cone"
-	local reach = (1.2 + Config.Robot.BarrelLength) * e.stats.scale
-	return w.range * e.stats.rangeMult * (if spread then Config.Barrels.spreadRange else 1) + (if prim.kind == "cone" then hit else reach)
+	return Stats.attackRange(Config, Upgrades.primaryFor(e.build.stacks) or c.primary, e.stats, e.build)
 end
 
 -- Stats, walk speed, HP clamp and the attributes clients read.

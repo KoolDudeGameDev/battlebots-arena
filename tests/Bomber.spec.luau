@@ -6,6 +6,11 @@ local Config = require("../src/shared/Config")
 local Stats = require("../src/shared/Stats")
 local Upgrades = require("../src/shared/Upgrades")
 local OfferGenerator = require("../src/shared/OfferGenerator")
+local Combat2D = require("../src/shared/Combat2D")
+
+local function near(a: number, b: number): boolean
+	return math.abs(a - b) < 1e-6
+end
 
 local function stats(id: string, small: boolean?)
 	return Stats.compute(Config, { stacks = {}, chassis = Chassis.byId[id], small = small }, 0)
@@ -58,5 +63,20 @@ return function(test)
 	test("detonating leaves 25% HP and healing past the rebuild line makes it big again", function()
 		local B = Config.Bomber
 		assert(B.hpAfter == 0.25 and B.rebuildAt > B.hpAfter and B.rebuildAt <= 1)
+	end)
+
+	test("the bomb blast is exactly the drawn ring: 300 at the centre, 150 at the edge (D80)", function()
+		local S = Config.Skills.skl_bomb
+		local ring = Stats.attackRange(Config, Chassis.byId.bomber.primary, stats("bomber"), { stacks = {} })
+		assert(near(ring, Config.Weapons.netgun.range + 1.2 + Config.Robot.BarrelLength), "ring " .. ring)
+		assert(S.damage == 300 and S.edge == 0.5, "damage and edge")
+		assert(S.radius == nil and S.radiusPerRank == nil, "radius comes from the ring, not the skill")
+		assert(near(S.damage * Combat2D.splashFactor(ring, ring, S.edge), 150))
+	end)
+
+	test("the small form heals itself back to big in about 12 s (D80)", function()
+		local B = Config.Bomber
+		local secs = (B.rebuildAt - B.hpAfter) / B.smallRegenPerSecond
+		assert(secs >= 10 and secs <= 14, "rebuild takes " .. secs .. " s")
 	end)
 end

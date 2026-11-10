@@ -55,7 +55,7 @@ local list: { Def } = {
 	{ id = "skl_nullfield", name = "Null Field", category = "Skill", rarity = "Rare", weight = 2, max = 3, minLevel = 6, tags = { "sustain" }, text = "A big field around you for 3 s: enemy shots and robots inside slow down. 15 s cooldown" },
 	{ id = "skl_flipper", name = "Flipper", category = "Skill", rarity = "Rare", weight = 3, max = 3, minLevel = 4, tags = { "sustain" }, text = "Flip robots in front of you into the air: they can't drive or attack for 1.2 s. 10 s cooldown" },
 	-- The Bomber's own skill (D70): it starts with rank 1; cards only rank it up.
-	{ id = "skl_bomb", name = "Detonate", category = "Skill", rarity = "Rare", weight = 3, max = 3, minLevel = 2, tags = { "offense" }, text = "Blow up: big blast, then small and fast at 25% HP. Ranks: +3 radius, +25% damage", requiresTag = "bomber", locked = true },
+	{ id = "skl_bomb", name = "Detonate", category = "Skill", rarity = "Rare", weight = 3, max = 3, minLevel = 2, tags = { "offense" }, text = "Blow up: big blast, then small and fast at 25% HP. Ranks: +25% damage", requiresTag = "bomber", locked = true },
 	-- The anti-bullying tool (D42): available from the first pick, boosted for new players.
 	{ id = "skl_earthwall", name = "Earth Wall", category = "Skill", rarity = "Rare", weight = 3, max = 3, minLevel = 2, tags = { "sustain" }, text = "Raise a wall that blocks bullets and robots. 14 s cooldown", earlyBoost = 2 },
 
