@@ -293,7 +293,7 @@ Config.Bosses = {
 			speed = 8,
 			hazard = "hammers",
 			-- A red warning circle, then the hammer lands on it.
-			attack = { kind = "smash", every = 3, windup = 0.8, reach = 6, radius = 16, damage = 45, knockback = 20 } -- radius 12 -> 16 (D80),
+			attack = { kind = "smash", every = 3, windup = 0.8, reach = 6, radius = 16, damage = 45, knockback = 20 }, -- radius 12 -> 16 (D80)
 		},
 		grinder = {
 			name = "Grinder",
