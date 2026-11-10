@@ -7,6 +7,7 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local World = require(script.Parent.World)
+local Arena = require(script.Parent.Arena)
 
 local Guard = {}
 
@@ -58,7 +59,7 @@ local function check(e: World.Entity, interval: number)
 		return
 	end
 	local AC = Config.AntiCheat
-	local half = Config.Arena.HalfSize
+	local half = Arena.half()
 	if math.abs(pos.X) > half or math.abs(pos.Z) > half or pos.Y > 20 or pos.Y < -10 then
 		snapBack(e, root)
 		return

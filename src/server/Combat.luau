@@ -24,7 +24,6 @@ local Pickups = require(script.Parent.Pickups)
 local Combat = {}
 
 local W = Config.Weapons
-local HALF = Config.Arena.HalfSize
 local RICOCHET_CODE = Config.RicochetCode
 local SPAWN_RECORD = 37 -- bytes per projectile in the spawn buffer
 local SPAWN_PER_PACKET = 24 -- 24 * 37 = 888 bytes, under the 1000-byte unreliable limit
@@ -260,12 +259,7 @@ local function blockedAt(x1: number, z1: number, x2: number, z2: number): number
 			best = ht
 		end
 	end
-	for _, b in Arena.coverBoxes do
-		take(Combat2D.segmentBox(x1, z1, x2, z2, b[1], b[2], b[3], b[4]))
-	end
-	for _, c in Arena.circles do
-		take(Combat2D.segmentCircle(x1, z1, x2, z2, c.x, c.z, c.r))
-	end
+	take(Arena.blockedAt(x1, z1, x2, z2, 0))
 	for _, w in walls do
 		take(Combat2D.segmentOBB(x1, z1, x2, z2, w.cx, w.cz, w.ux, w.uz, w.halfU, w.halfV))
 	end
@@ -496,7 +490,7 @@ local function spawnWall(e: World.Entity, rank: number)
 	local x, z = World.position(e)
 	local ux, uz = math.cos(e.aim), math.sin(e.aim)
 	local reach = S.distance * e.stats.scale + S.thickness / 2
-	local half = Config.Arena.HalfSize - 2
+	local half = Arena.half() - 2
 	local cx = math.clamp(x + ux * reach, -half, half)
 	local cz = math.clamp(z + uz * reach, -half, half)
 
@@ -982,6 +976,7 @@ type Body = { e: World.Entity, x: number, z: number, r: number }
 
 local function boundaryT(x1: number, z1: number, x2: number, z2: number): number?
 	local best: number? = nil
+	local HALF = Arena.half()
 	local function axis(a1: number, a2: number)
 		if math.abs(a2) > HALF and a2 ~= a1 then
 			local edge = if a2 > 0 then HALF else -HALF
@@ -1018,7 +1013,6 @@ local function stepProjectiles(dt: number, fields: { any })
 			table.insert(bodies, { e = e, x = x, z = z, r = World.hitRadius(e, Config) })
 		end
 	end
-	local covers = Arena.coverBoxes
 
 	for i = #projectiles, 1, -1 do
 		local p = projectiles[i]
@@ -1037,17 +1031,9 @@ local function stepProjectiles(dt: number, fields: { any })
 
 		-- Solid things first: arena edge, cover, crates, Earth Walls.
 		local bestT = boundaryT(x1, z1, x2, z2)
-		for _, b in covers do
-			local ht = Combat2D.segmentBox(x1, z1, x2, z2, b[1], b[2], b[3], b[4])
-			if ht and (bestT == nil or ht < bestT) then
-				bestT = ht
-			end
-		end
-		for _, c in Arena.circles do -- tree trunks and boulders
-			local ht = Combat2D.segmentCircle(x1, z1, x2, z2, c.x, c.z, c.r + p.radius)
-			if ht and (bestT == nil or ht < bestT) then
-				bestT = ht
-			end
+		local coverT = Arena.blockedAt(x1, z1, x2, z2, p.radius) -- the current map's cover (D81)
+		if coverT and (bestT == nil or coverT < bestT) then
+			bestT = coverT
 		end
 		local wallT = bestT
 		local hitCrate: Pickups.Crate? = nil

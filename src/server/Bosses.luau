@@ -16,6 +16,7 @@ local Remotes = require(Shared.Remotes)
 local Combat2D = require(Shared.Combat2D)
 local HazardTiming = require(Shared.HazardTiming)
 local World = require(script.Parent.World)
+local Arena = require(script.Parent.Arena)
 local Pickups = require(script.Parent.Pickups)
 local Combat = require(script.Parent.Combat)
 local Match = require(script.Parent.Match)
@@ -23,7 +24,6 @@ local Profiles = require(script.Parent.Profiles)
 
 local B = Config.Bosses
 local H = Config.Hazards
-local HALF = Config.Arena.HalfSize
 local rng = Random.new()
 
 local Bosses = {}
@@ -271,6 +271,7 @@ local function tickBoss(dt: number)
 	if a.chargeDir and t < a.busyUntil then
 		local dir = a.chargeDir.Unit
 		local step = a.def.speed * atk.speedMult * e.slowFactor * dt
+		local HALF = Arena.half()
 		local nx = math.clamp(x + dir.X * step, -HALF + 12, HALF - 12)
 		local nz = math.clamp(z + dir.Z * step, -HALF + 12, HALF - 12)
 		face(a, nx, nz, dir)

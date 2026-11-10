@@ -50,7 +50,7 @@ end
 
 local function spawnOrb(kind: string, x: number, z: number, value: number?, zone: string?)
 	nextOrbId += 1
-	local half = Config.Arena.HalfSize - 2
+	local half = Arena.half() - 2
 	x = math.clamp(x, -half, half)
 	z = math.clamp(z, -half, half)
 	local o: Orb = {

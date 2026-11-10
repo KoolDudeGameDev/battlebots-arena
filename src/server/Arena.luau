@@ -1,6 +1,7 @@
--- Builds the battlefield from MapLayout: grass with zone tints, the boundary
--- wall, inner walls and ruined pillars, tree groves and boulders. Also finds
--- clear spawn points.
+-- The current map (D79, D81): builds any map from MapLayouts (greybox primitives
+-- until the art exists), owns its cover lists for the hit tests, picks spawn points
+-- and breaks destructible cover. The grassland keeps its terrain painting, trees,
+-- rocks and flowers; biomes and boss arenas get FillBlock floors.
 
 local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,20 +10,15 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Combat2D = require(Shared.Combat2D)
-local MapLayout = require(Shared.MapLayout)
+local MapLayouts = require(Shared.MapLayouts)
+local MapQuery = require(Shared.MapQuery)
+local Remotes = require(Shared.Remotes)
 local World = require(script.Parent.World)
 
 local Arena = {}
 
 local A = Config.Arena
-local boxes = MapLayout.boxes()
-local circles = MapLayout.circles()
--- Bullets stop at these. Boxes are {minX, minZ, maxX, maxZ} for the hit tests.
-Arena.coverBoxes = {} :: { { number } }
-for _, b in boxes do
-	table.insert(Arena.coverBoxes, { b.minX, b.minZ, b.maxX, b.maxZ })
-end
-Arena.circles = circles
+Arena.folder = nil :: Folder?
 
 local STONE = Color3.fromRGB(128, 126, 120) -- boundary wall
 local DARK_STONE = Color3.fromRGB(92, 90, 86)
@@ -165,8 +161,8 @@ local function paintGround(full: number, rng: Random): { { number } }
 		end
 	end
 	-- Rock beds under the boulders
-	for _, c in circles do
-		if c.kind == "rock" then
+	for _, c in MapLayouts.grassland.circles do
+		if c.kind == "stone" and c.h < c.r * 2.5 then
 			patch(c.x, c.z, c.r + 2.5, Enum.Material.Slate)
 		end
 	end
@@ -174,10 +170,17 @@ local function paintGround(full: number, rng: Random): { { number } }
 end
 
 -- Warm daylight with a soft haze, so the arena reads less flat.
-local function setLighting()
-	Lighting.ClockTime = 14.5
-	Lighting.Brightness = 2.4
-	Lighting.OutdoorAmbient = Color3.fromRGB(135, 140, 150)
+
+local function color(c: { number }): Color3
+	return Color3.fromRGB(c[1], c[2], c[3])
+end
+
+-- Lighting per map (Config.Maps.lighting, bible section 10). Snapped during the fade.
+local function setLighting(name: string)
+	local L = Config.Maps.lighting[name] or Config.Maps.lighting.grassland
+	Lighting.ClockTime = L.clock
+	Lighting.Brightness = L.brightness
+	Lighting.OutdoorAmbient = color(L.ambient)
 	Lighting.GlobalShadows = true
 	local function ensure(className: string, props: { [string]: any })
 		local existing = Lighting:FindFirstChildOfClass(className)
@@ -187,85 +190,278 @@ local function setLighting()
 		end
 		inst.Parent = Lighting
 	end
-	ensure("Atmosphere", { Density = 0.3, Offset = 0.2, Color = Color3.fromRGB(205, 200, 185), Decay = Color3.fromRGB(110, 130, 160), Glare = 0.15, Haze = 1.4 })
-	ensure("ColorCorrectionEffect", { Saturation = 0.12, Contrast = 0.06, Brightness = 0.02 })
-	ensure("BloomEffect", { Intensity = 0.5, Size = 24, Threshold = 1.6 })
-	ensure("SunRaysEffect", { Intensity = 0.06, Spread = 0.6 })
+	local a = L.atmosphere
+	ensure("Atmosphere", { Density = a.density, Offset = a.offset, Color = color(a.color), Decay = color(a.decay), Glare = a.glare, Haze = a.haze })
+	ensure("ColorCorrectionEffect", { Brightness = L.cc.brightness, Contrast = L.cc.contrast, Saturation = L.cc.saturation, TintColor = color(L.cc.tint) })
+	ensure("BloomEffect", { Intensity = L.bloom.intensity, Size = L.bloom.size, Threshold = L.bloom.threshold })
+	ensure("SunRaysEffect", { Intensity = L.sunRays, Spread = 0.6 })
 end
 
-function Arena.build()
-	-- The template place's Baseplate would z-fight with the ground, and a
-	-- SpawnLocation would sit in the arena as an obstacle. Remove both at runtime.
-	for _, child in Workspace:GetChildren() do
-		if child:IsA("SpawnLocation") or (child:IsA("BasePart") and child.Name == "Baseplate") then
-			child:Destroy()
+-- Biome and arena floors (E6): FillBlock squares, no TerrainRegion paste.
+-- { material, colour } for the outer, middle and centre squares (arenas: floor, outside).
+local FLOORS = {
+	forge_highlands = { { Enum.Material.Slate, { 111, 106, 99 } }, { Enum.Material.Pebble, { 142, 133, 122 } }, { Enum.Material.Ground, { 183, 174, 159 } } },
+	inferno_fields = { { Enum.Material.Basalt, { 52, 48, 46 } }, { Enum.Material.Ground, { 90, 84, 80 } }, { Enum.Material.Basalt, { 76, 69, 66 } } },
+	grinder_scrapyard = { { Enum.Material.Asphalt, { 92, 82, 72 } }, { Enum.Material.Ground, { 124, 116, 106 } }, { Enum.Material.Concrete, { 154, 150, 142 } } },
+	arena_forge = { { Enum.Material.Basalt, { 58, 54, 52 } }, { Enum.Material.CrackedLava, { 255, 120, 40 } } },
+	arena_inferno = { { Enum.Material.Basalt, { 46, 42, 40 } }, { Enum.Material.CrackedLava, { 255, 90, 26 } } },
+	arena_grinder = { { Enum.Material.Concrete, { 110, 106, 100 } }, { Enum.Material.Asphalt, { 60, 56, 54 } } },
+}
+
+local function paintFloor(map: any)
+	local terrain = Workspace.Terrain
+	local f = FLOORS[map.name]
+	terrain:Clear()
+	for _, m in f do
+		terrain:SetMaterialColor(m[1], color(m[2]))
+	end
+	local size = map.half * 2 + 80
+	local function square(side: number, material: Enum.Material)
+		terrain:FillBlock(CFrame.new(0, -4, 0), Vector3.new(side, 8, side), material) -- top at Y = 0
+	end
+	if map.kind == "overworld" then
+		square(size, f[1][1])
+		square(A.Zones.middle.max * 2, f[2][1])
+		square(A.Zones.centre.max * 2, f[3][1])
+	else
+		square(size + 160, f[2][1]) -- glowing or dark ground outside the arena walls
+		square(map.half * 2, f[1][1])
+	end
+end
+
+-- Map state ----------------------------------------------------------------------
+
+local current: any = MapLayouts.grassland
+Arena.broken = {} :: { [number]: boolean }
+local pieceParts: { [number]: { Instance } } = {}
+
+function Arena.map(): any
+	return current
+end
+
+function Arena.half(): number
+	return current.half
+end
+
+function Arena.isArena(): boolean
+	return current.kind == "arena"
+end
+
+-- First fraction (0..1) of the segment that meets cover grown by pad, or nil.
+function Arena.blockedAt(x1: number, z1: number, x2: number, z2: number, pad: number): number?
+	return MapQuery.blockedAt(current, x1, z1, x2, z2, pad, Arena.broken)
+end
+
+function Arena.inCover(x: number, z: number, margin: number): boolean
+	return MapQuery.inCover(current, x, z, margin, Arena.broken)
+end
+
+-- A random clear point in a zone (arenas: anywhere on the fight floor).
+function Arena.randomPointInZone(zone: string, rng: Random, margin: number?): (number, number)
+	return MapQuery.randomInZone(current, A.Zones, zone, rng, margin or 2, Arena.broken)
+end
+
+-- The map's Spawn point farthest from every living robot (E5), never on a crate.
+function Arena.findSpawn(rng: Random, avoid: { Vector3 }): (number, number)
+	local enemies = {}
+	for _, e in World.entities do
+		if e.alive and e.root then
+			local p = e.root.Position
+			table.insert(enemies, { p.X, p.Z })
 		end
 	end
+	for _, p in avoid do -- crates count as "close": never spawn inside one
+		table.insert(enemies, { p.X, p.Z })
+	end
+	return MapQuery.pickSpawn(current, enemies, A.SpawnMinEnemyDistance, rng:NextInteger(1, #current.spawns))
+end
 
+-- Greybox pieces ------------------------------------------------------------------
+
+local KIND = {
+	stone = { Enum.Material.Cobblestone, Color3.fromRGB(128, 124, 116) },
+	metal = { Enum.Material.DiamondPlate, Color3.fromRGB(70, 80, 92) },
+	scrap = { Enum.Material.CorrodedMetal, Color3.fromRGB(128, 92, 60) },
+	obsidian = { Enum.Material.Basalt, Color3.fromRGB(38, 34, 44) },
+	wood = { Enum.Material.Wood, Color3.fromRGB(110, 78, 48) },
+}
+local CONTAINER = { Color3.fromRGB(47, 110, 142), Color3.fromRGB(184, 73, 46), Color3.fromRGB(94, 122, 58) }
+
+local function obbFrame(b: any, y: number): CFrame
+	return CFrame.fromMatrix(Vector3.new(b.cx, y, b.cz), Vector3.new(b.ux, 0, b.uz), Vector3.yAxis)
+end
+
+-- Destructible cover shows a glowing crack band, so players learn it breaks.
+local function crackBand(size: Vector3, cf: CFrame, parent: Instance): Part
+	local p = block("Cracks", size, cf, Color3.fromRGB(255, 120, 40), Enum.Material.Neon, parent, false)
+	p.Transparency = 0.35
+	return p
+end
+
+local function buildBox(b: any, parent: Instance, rng: Random): { Instance }
+	local style = KIND[b.kind] or KIND.stone
+	local col = style[2]
+	if b.name == "ContainerStack" or b.name == "SortingBin" then
+		col = CONTAINER[(b.id % #CONTAINER) + 1]
+	elseif b.kind == "stone" then
+		local shade = rng:NextInteger(-12, 12)
+		col = Color3.fromRGB(128 + shade, 124 + shade, 116 + shade)
+	end
+	local size = Vector3.new(b.hu * 2, b.h, b.hv * 2)
+	local parts: { Instance } = {}
+	table.insert(parts, block(b.name, size, obbFrame(b, b.h / 2), col, style[1], parent))
+	if b.kind == "stone" and current.name == "grassland" then
+		table.insert(parts, block("WallTop", size + Vector3.new(0.6, 0.5 - b.h, 0.6), obbFrame(b, b.h + 0.25), DARK_STONE, Enum.Material.Slate, parent, false))
+		table.insert(parts, block("Moss", size + Vector3.new(0.2, 0.8 - b.h, 0.2), obbFrame(b, 0.4), Color3.fromRGB(80, 110, 60), Enum.Material.Grass, parent, false))
+	end
+	if b.d then
+		table.insert(parts, crackBand(size + Vector3.new(0.3, 0.4 - b.h, 0.3), obbFrame(b, b.h * 0.6), parent))
+	end
+	return parts
+end
+
+local function buildCircle(c: any, parent: Instance, rng: Random): { Instance }
+	if c.kind == "wood" and c.r < 3 then
+		buildTree(c, parent, rng)
+		return {}
+	end
+	if c.kind == "stone" and c.h < c.r * 2.5 then
+		buildRock(c, parent, rng)
+		return {}
+	end
+	local style = KIND[c.kind] or KIND.stone
+	local parts: { Instance } = {}
+	local post = block(c.name, Vector3.new(c.h, c.r * 2, c.r * 2), CFrame.new(c.x, c.h / 2, c.z) * CFrame.Angles(0, 0, math.rad(90)), style[2], style[1], parent)
+	post.Shape = Enum.PartType.Cylinder
+	table.insert(parts, post)
+	if c.kind == "wood" then -- a big old tree: the canopy is overhead decor
+		local green = Color3.fromRGB(rng:NextInteger(60, 90), rng:NextInteger(120, 150), rng:NextInteger(50, 70))
+		ball("Canopy", c.r * 7, Vector3.new(c.x, c.h + c.r * 2.5, c.z), green, Enum.Material.Grass, parent, false)
+	end
+	if c.d then
+		local band = crackBand(Vector3.new(0.4, c.r * 2 + 0.3, c.r * 2 + 0.3), CFrame.new(c.x, c.h * 0.6, c.z) * CFrame.Angles(0, 0, math.rad(90)), parent)
+		band.Shape = Enum.PartType.Cylinder
+		table.insert(parts, band)
+	end
+	return parts
+end
+
+local function disc(name: string, x: number, z: number, radius: number, col: Color3, parent: Instance): Part
+	local p = block(name, Vector3.new(0.12, radius * 2, radius * 2), CFrame.new(x, 0.08, z) * CFrame.Angles(0, 0, math.rad(90)), col, Enum.Material.Neon, parent, false)
+	p.Shape = Enum.PartType.Cylinder
+	p.Transparency = 0.6
+	return p
+end
+
+-- Destroys a destructible piece: no longer blocks anything, server or client.
+-- kind is "box" or "circle"; returns its centre so the caller can play debris.
+function Arena.breakPiece(kind: string, id: number): (number?, number?)
+	local key = if kind == "circle" then MapQuery.CIRCLE_KEY + id else id
+	if Arena.broken[key] then
+		return nil, nil
+	end
+	Arena.broken[key] = true
+	local parts = pieceParts[key]
+	if parts then
+		for _, p in parts do
+			p:Destroy()
+		end
+	end
+	pieceParts[key] = nil
+	Remotes.CoverBroken:FireAllClients(kind, id)
+	local list = if kind == "circle" then current.circles else current.boxes
+	for _, piece in list do
+		if piece.id == id then
+			return piece.cx or piece.x, piece.cz or piece.z
+		end
+	end
+	return nil, nil
+end
+
+-- Builds a map (D81): floor, lighting, boundary wall, cover, lava, spawn pads and the
+-- boss gate. Replaces whatever map was up. Sets Workspace attribute Map.
+function Arena.load(name: string)
+	local map = MapLayouts[name]
+	assert(map, "no map " .. tostring(name))
+	current = map
+	Arena.broken = {}
+	pieceParts = {}
+	local old = Arena.folder
+	if old then
+		old:Destroy()
+	end
 	local folder = Instance.new("Folder")
 	folder.Name = "Arena"
 	local rng = Random.new(7) -- fixed seed: every server looks the same
 
-	local full = A.HalfSize * 2
-	local grass = paintGround(full, rng)
-	setLighting()
+	local grass: { { number } } = {}
+	if name == "grassland" then
+		grass = paintGround(A.HalfSize * 2, rng)
+	else
+		paintFloor(map)
+	end
+	setLighting(name)
 
-	-- Boundary: a stone wall with posts, so the edge reads clearly in third-person.
-	local h, t = A.WallHeight, A.WallThickness
-	local edge = A.HalfSize + t / 2
+	-- Boundary: a wall at the map's edge (arenas: tall, closed in). Posts on the overworld.
+	local h, t = map.wallHeight, A.WallThickness
+	local half = map.half
+	local full = half * 2
+	local edge = half + t / 2
+	local wallColor = if map.kind == "arena" then Color3.fromRGB(70, 66, 62) else STONE
 	for _, side in { { 0, -edge, full + 2 * t, t }, { 0, edge, full + 2 * t, t }, { -edge, 0, t, full }, { edge, 0, t, full } } do
-		block("BoundaryWall", Vector3.new(side[3], h, side[4]), CFrame.new(side[1], h / 2, side[2]), STONE, Enum.Material.Cobblestone, folder)
+		block("BoundaryWall", Vector3.new(side[3], h, side[4]), CFrame.new(side[1], h / 2, side[2]), wallColor, Enum.Material.Cobblestone, folder)
 	end
-	for i = -A.HalfSize, A.HalfSize, 38 do
-		for _, p in { { i, -edge }, { i, edge }, { -edge, i }, { edge, i } } do
-			block("WallPost", Vector3.new(t + 1.5, h + 2, t + 1.5), CFrame.new(p[1], (h + 2) / 2, p[2]), DARK_STONE, Enum.Material.Cobblestone, folder)
+	if map.kind == "overworld" then
+		for i = -half, half, 38 do
+			for _, p in { { i, -edge }, { i, edge }, { -edge, i }, { edge, i } } do
+				block("WallPost", Vector3.new(t + 1.5, h + 2, t + 1.5), CFrame.new(p[1], (h + 2) / 2, p[2]), DARK_STONE, Enum.Material.Cobblestone, folder)
+			end
 		end
 	end
 
-	-- Inner walls (weathered stone, each a slightly different shade) and ruined pillars
-	for _, b in boxes do
-		local sx, sz = b.maxX - b.minX, b.maxZ - b.minZ
-		local cx, cz = (b.minX + b.maxX) / 2, (b.minZ + b.maxZ) / 2
-		if b.kind == "pillar" then
-			block("Pillar", Vector3.new(sx, b.height, sz), CFrame.new(cx, b.height / 2, cz), Color3.fromRGB(170, 160, 140), Enum.Material.Limestone, folder)
-			block("PillarBase", Vector3.new(sx + 1.4, 1, sz + 1.4), CFrame.new(cx, 0.5, cz), Color3.fromRGB(150, 140, 122), Enum.Material.Limestone, folder, false)
-			block("PillarCap", Vector3.new(sx + 1, 0.8, sz + 1), CFrame.new(cx, b.height + 0.4, cz), Color3.fromRGB(150, 140, 122), Enum.Material.Limestone, folder, false)
-		else
-			local shade = rng:NextInteger(-12, 12)
-			local stone = Color3.fromRGB(128 + shade, 124 + shade, 116 + shade)
-			block("Wall", Vector3.new(sx, b.height, sz), CFrame.new(cx, b.height / 2, cz), stone, Enum.Material.Cobblestone, folder)
-			block("WallTop", Vector3.new(sx + 0.6, 0.5, sz + 0.6), CFrame.new(cx, b.height + 0.25, cz), DARK_STONE, Enum.Material.Slate, folder, false)
-			-- A mossy band at the foot of the wall
-			block("Moss", Vector3.new(sx + 0.2, 0.8, sz + 0.2), CFrame.new(cx, 0.4, cz), Color3.fromRGB(80, 110, 60), Enum.Material.Grass, folder, false)
-		end
+	for _, b in map.boxes do
+		pieceParts[b.id] = buildBox(b, folder, rng)
+	end
+	for _, c in map.circles do
+		pieceParts[MapQuery.CIRCLE_KEY + c.id] = buildCircle(c, folder, rng)
+	end
+	for _, l in map.lava do
+		local p = block("Lava", Vector3.new(l.hu * 2, 0.2, l.hv * 2), obbFrame(l, 0.06), Color3.fromRGB(255, 96, 20), Enum.Material.Neon, folder, false)
+		p.Transparency = 0.05
+	end
+	for _, s in map.spawns do
+		disc("SpawnPad", s.x, s.z, 3, Color3.fromRGB(47, 214, 232), folder)
+	end
+	for _, p in map.pads do
+		disc("HealthPad", p.x, p.z, 3, Color3.fromRGB(60, 200, 90), folder)
+	end
+	if map.gate then -- the boss gate: a glowing doorway on the inside face of the wall
+		local g = map.gate
+		local onX = math.abs(g.x) > math.abs(g.z)
+		local size = if onX then Vector3.new(1, 22, 26) else Vector3.new(26, 22, 1)
+		local pos = Vector3.new(if onX then math.sign(g.x) * (half - 0.5) else g.x, 11, if onX then g.z else math.sign(g.z) * (half - 0.5))
+		local door = block("BossGate", size, CFrame.new(pos), Color3.fromRGB(255, 110, 40), Enum.Material.Neon, folder, false)
+		door.Transparency = 0.25
 	end
 
-	-- Trees and boulders
-	for _, c in circles do
-		if c.kind == "tree" then
-			buildTree(c, folder, rng)
-		else
-			buildRock(c, folder, rng)
-		end
-	end
-
-	-- Cosmetic bushes and flower clusters, only inside the tall-grass patches so
-	-- the open field stays clean.
-	local flowers = { Color3.fromRGB(240, 220, 90), Color3.fromRGB(240, 130, 170), Color3.fromRGB(235, 235, 245), Color3.fromRGB(160, 120, 230) }
-	for _ = 1, 70 do
-		local blob = grass[rng:NextInteger(1, #grass)]
-		local a, d = rng:NextNumber(0, math.pi * 2), rng:NextNumber(0, blob[3])
-		local x, z = blob[1] + math.cos(a) * d, blob[2] + math.sin(a) * d
-		local inside = math.abs(x) < A.HalfSize - 2 and math.abs(z) < A.HalfSize - 2
-		if inside and not Arena.inCover(x, z, 4) then
-			if rng:NextNumber() < 0.55 then
-				local g = Color3.fromRGB(rng:NextInteger(60, 80), rng:NextInteger(115, 140), rng:NextInteger(50, 65))
-				ball("Bush", rng:NextNumber(2, 3.5), Vector3.new(x, 0.6, z), g, Enum.Material.Grass, folder, false)
-				ball("Bush", rng:NextNumber(1.5, 2.5), Vector3.new(x + rng:NextNumber(-1.2, 1.2), 0.5, z + rng:NextNumber(-1.2, 1.2)), g:Lerp(Color3.new(0, 0, 0), 0.1), Enum.Material.Grass, folder, false)
-			else
-				local color = flowers[rng:NextInteger(1, #flowers)]
-				for _ = 1, 6 do
-					ball("Flower", rng:NextNumber(0.4, 0.7), Vector3.new(x + rng:NextNumber(-1.5, 1.5), 0.3, z + rng:NextNumber(-1.5, 1.5)), color, Enum.Material.SmoothPlastic, folder, false)
+	-- Grassland: bushes and flower clusters in the tall-grass patches (cosmetic).
+	if name == "grassland" then
+		local flowers = { Color3.fromRGB(240, 220, 90), Color3.fromRGB(240, 130, 170), Color3.fromRGB(235, 235, 245), Color3.fromRGB(160, 120, 230) }
+		for _ = 1, 70 do
+			local blob = grass[rng:NextInteger(1, #grass)]
+			local a, d = rng:NextNumber(0, math.pi * 2), rng:NextNumber(0, blob[3])
+			local x, z = blob[1] + math.cos(a) * d, blob[2] + math.sin(a) * d
+			local inside = math.abs(x) < half - 2 and math.abs(z) < half - 2
+			if inside and not Arena.inCover(x, z, 4) then
+				if rng:NextNumber() < 0.55 then
+					local g = Color3.fromRGB(rng:NextInteger(60, 80), rng:NextInteger(115, 140), rng:NextInteger(50, 65))
+					ball("Bush", rng:NextNumber(2, 3.5), Vector3.new(x, 0.6, z), g, Enum.Material.Grass, folder, false)
+					ball("Bush", rng:NextNumber(1.5, 2.5), Vector3.new(x + rng:NextNumber(-1.2, 1.2), 0.5, z + rng:NextNumber(-1.2, 1.2)), g:Lerp(Color3.new(0, 0, 0), 0.1), Enum.Material.Grass, folder, false)
+				else
+					local fc = flowers[rng:NextInteger(1, #flowers)]
+					for _ = 1, 6 do
+						ball("Flower", rng:NextNumber(0.4, 0.7), Vector3.new(x + rng:NextNumber(-1.5, 1.5), 0.3, z + rng:NextNumber(-1.5, 1.5)), fc, Enum.Material.SmoothPlastic, folder, false)
+					end
 				end
 			end
 		end
@@ -273,68 +469,18 @@ function Arena.build()
 
 	folder.Parent = Workspace
 	Arena.folder = folder
+	Workspace:SetAttribute("Map", name)
+	Workspace:SetAttribute("MapDisplay", map.displayName)
 end
 
-function Arena.inCover(x: number, z: number, margin: number): boolean
-	for _, b in Arena.coverBoxes do
-		if Combat2D.pointInBox(x, z, b[1], b[2], b[3], b[4], margin) then
-			return true
+-- Boot: clear the template's Baseplate and SpawnLocation, then build the grassland.
+function Arena.build()
+	for _, child in Workspace:GetChildren() do
+		if child:IsA("SpawnLocation") or (child:IsA("BasePart") and child.Name == "Baseplate") then
+			child:Destroy()
 		end
 	end
-	for _, c in circles do
-		if (x - c.x) ^ 2 + (z - c.z) ^ 2 < (c.r + margin) ^ 2 then
-			return true
-		end
-	end
-	return false
-end
-
--- A random point whose Chebyshev distance from the centre is in [min, max), clear of obstacles.
-function Arena.randomPointInZone(zone: string, rng: Random, margin: number?): (number, number)
-	local z = A.Zones[zone]
-	local m = margin or 2
-	for _ = 1, 50 do
-		local x = rng:NextNumber(-z.max, z.max)
-		local y = rng:NextNumber(-z.max, z.max)
-		local d = Combat2D.chebyshev(x, y)
-		if d >= z.min and d < z.max and not Arena.inCover(x, y, m) then
-			return x, y
-		end
-	end
-	return (z.min + z.max) / 2, 0
-end
-
--- Outer-zone spawn at least SpawnMinEnemyDistance from every living robot;
--- after SpawnTries, the candidate farthest from everyone.
-function Arena.findSpawn(rng: Random, avoid: { Vector3 }): (number, number)
-	local bestX, bestZ = Arena.randomPointInZone("outer", rng, 5)
-	local bestDist = -1
-	for _ = 1, A.SpawnTries do
-		local x, z = Arena.randomPointInZone("outer", rng, 5)
-		local nearest = math.huge
-		for _, e in World.entities do
-			if e.alive and e.root then
-				local p = e.root.Position
-				nearest = math.min(nearest, math.sqrt((p.X - x) ^ 2 + (p.Z - z) ^ 2))
-			end
-		end
-		local blocked = false
-		for _, p in avoid do -- scrap piles: never spawn inside one
-			if math.sqrt((p.X - x) ^ 2 + (p.Z - z) ^ 2) < 7 then
-				blocked = true
-			end
-		end
-		if blocked then
-			continue
-		end
-		if nearest >= A.SpawnMinEnemyDistance then
-			return x, z
-		end
-		if nearest > bestDist then
-			bestX, bestZ, bestDist = x, z, nearest
-		end
-	end
-	return bestX, bestZ
+	Arena.load("grassland")
 end
 
 return Arena

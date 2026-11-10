@@ -67,7 +67,11 @@ function MapFlow.tick(cfg: any, s: State, t: number, players: number, roll: numb
 		local boss = choices[math.clamp(math.floor(roll * #choices) + 1, 1, #choices)]
 		return { phase = "warning", map = "grassland", boss = boss, lastBoss = s.lastBoss, endsAt = t + B.warning, nextBossAt = math.huge }, "warning"
 	end
-	if t < s.endsAt and not (s.phase == "biome" and t >= s.endsAt - M.revertWarning) then
+	local due = t >= s.endsAt
+	if s.phase == "biome" then
+		due = t >= s.endsAt - M.revertWarning
+	end
+	if not due then
 		return s, nil
 	end
 	local boss = s.boss :: string
