@@ -575,7 +575,9 @@ local function buildBoss()
 		for i = 0, 9 do
 			local c = if i % 2 == 0 then Color3.fromRGB(255, 205, 40) else Color3.fromRGB(25, 25, 25)
 			table.insert(keys, ColorSequenceKeypoint.new(i / 10, c))
-			table.insert(keys, ColorSequenceKeypoint.new(math.min(1, (i + 1) / 10 - 0.0001), c))
+			-- Roblox rejects a ColorSequence whose last key isn't at exactly 1, and that
+			-- error stopped the whole HUD from starting (D82 bug).
+			table.insert(keys, ColorSequenceKeypoint.new(if i == 9 then 1 else (i + 1) / 10 - 0.0001, c))
 		end
 		local stripes = new("Frame", {
 			AnchorPoint = Vector2.new(0, edgeY),

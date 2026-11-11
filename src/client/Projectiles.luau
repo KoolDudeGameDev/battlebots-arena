@@ -188,6 +188,41 @@ end
 -- Rockets explode and nets land through their own server effects.
 local HIT_STYLE = { [1] = "robot", [2] = "robot", [4] = "robot", [5] = "robot" }
 
+-- A shot hitting cover: chips, dust or leaves, and the sound of what it is made of.
+local COVER_SOUND: { [string]: string } = { stone = "Rubble", robot = "MetalHit" } -- wood: the leaves and chips are enough
+local function coverHit(x: number, z: number, surface: string, l: Live)
+	Vfx.impact(x, z, surface, l.dx, l.dz, l.y0)
+	local sound = COVER_SOUND[surface]
+	if sound then
+		Sfx.at(sound, Vector3.new(x, l.y0, z), 0.5)
+	end
+end
+
+-- Cover the shot is about to hit (within the next ~0.4 s of flight) with no robot in
+-- front of it: where, and its surface. Nil if the shot must have hit a robot or crate.
+local function coverAhead(l: Live): (number?, number?, string)
+	local reach = math.max(6, l.speed * 0.4)
+	local x2, z2 = l.x + l.dx * reach, l.z + l.dz * reach
+	local t, kind = MapQuery.blockedAt(map, l.x, l.z, x2, z2, 0, broken)
+	if not t then
+		return nil, nil, ""
+	end
+	local hx, hz = l.x + (x2 - l.x) * t, l.z + (z2 - l.z) * t
+	local along = reach * t
+	for _, m in CollectionService:GetTagged("Robot") do
+		local root = (m :: Model).PrimaryPart
+		if root and m:GetAttribute("EntityId") ~= l.owner then
+			local rx, rz = root.Position.X - l.x, root.Position.Z - l.z
+			local d = rx * l.dx + rz * l.dz -- distance along the shot
+			local side = math.abs(rx * l.dz - rz * l.dx)
+			if d > -2 and d < along + 1 and side < (m:GetAttribute("HitRadius") or 3) + 1 then
+				return nil, nil, "" -- a robot is in the way: it hit the robot
+			end
+		end
+	end
+	return hx, hz, SURFACE[kind or ""] or "stone"
+end
+
 local function release(id: number)
 	local l = live[id]
 	if l then
@@ -271,9 +306,17 @@ function Projectiles.init(fx: Folder)
 			local id = buffer.readu32(buf, o)
 			local l = live[id]
 			-- Ended early by the server: it hit something. At the end of its range it just fades.
+			-- The server is ahead of this drawing, so its "ended" often arrives before the
+			-- shot visibly reaches what it hit: if cover is just ahead and no robot is in
+			-- between, it hit the cover (a tree must not clang like a robot).
 			if l and l.remaining > 1 and HIT_STYLE[l.code] then
-				Vfx.impact(l.x, l.z, HIT_STYLE[l.code], l.dx, l.dz, l.y0)
-				Sfx.at("MetalHit", Vector3.new(l.x, HEIGHT, l.z))
+				local cx, cz, surface = coverAhead(l)
+				if cx and cz then
+					coverHit(cx, cz, surface, l)
+				else
+					Vfx.impact(l.x, l.z, HIT_STYLE[l.code], l.dx, l.dz, l.y0)
+					Sfx.at("MetalHit", Vector3.new(l.x, l.y0, l.z))
+				end
 			end
 			release(id)
 		end
@@ -307,7 +350,7 @@ function Projectiles.init(fx: Folder)
 				end
 			end
 			if blocked and not (LOOKS[l.code] or LOOKS[1]).rocket and l.code ~= NET_CODE then
-				Vfx.impact(x2, z2, surface, l.dx, l.dz, l.y0)
+				coverHit(x2, z2, surface, l)
 			end
 			l.x, l.z = x2, z2
 			l.remaining -= step
