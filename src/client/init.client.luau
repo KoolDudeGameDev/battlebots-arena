@@ -16,6 +16,8 @@ local Vfx = require(script.Vfx)
 local Sfx = require(script.Sfx)
 local Hud = require(script.Hud)
 local Garage = require(script.Garage)
+local Crosshair = require(script.Crosshair)
+local CrateBars = require(script.CrateBars)
 
 -- Client-only visuals live here; nothing in this folder replicates.
 local fx = Instance.new("Folder")
@@ -34,5 +36,7 @@ Vfx.init(fx)
 Effects.init(fx)
 Hud.init(InputController.aimTouchActive)
 Garage.init()
+Crosshair.init()
+CrateBars.init()
 
 Remotes.ClientReady:FireServer() -- asks for the orb snapshot now that handlers exist

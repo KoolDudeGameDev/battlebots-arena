@@ -93,6 +93,15 @@ return function(test)
 		assert(speed == w.speed, "capped")
 	end)
 
+	test("Bombard rockets arm over distance (D83): weak point-blank, full damage once armed", function()
+		local w = Config.Weapons.launcher
+		assert(near(Combat2D.armFactor(0, w.armDistance, w.unarmed), w.unarmed), "point-blank")
+		assert(near(Combat2D.armFactor(w.armDistance / 2, w.armDistance, w.unarmed), (1 + w.unarmed) / 2), "half armed")
+		assert(near(Combat2D.armFactor(w.armDistance, w.armDistance, w.unarmed), 1), "armed")
+		assert(near(Combat2D.armFactor(100, w.armDistance, w.unarmed), 1))
+		assert(near(Combat2D.armFactor(3, nil, nil), 1), "weapons without arming always hit full")
+	end)
+
 	test("melee arc and flame cone checks", function()
 		local half = math.rad(50)
 		assert(Combat2D.inArc(0, 0, 0, half, 5.5, 5, 0, 3), "straight ahead")

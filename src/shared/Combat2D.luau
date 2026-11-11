@@ -126,6 +126,15 @@ function Combat2D.rocketSpeed(speed: number, accel: number, maxSpeed: number, dt
 	return math.min(maxSpeed, speed + accel * dt)
 end
 
+-- Damage factor for a shot that has flown `flown` studs (D83): it rises from
+-- `unarmed` at the muzzle to 1 at `armDistance`. Weapons without arming always get 1.
+function Combat2D.armFactor(flown: number, armDistance: number?, unarmed: number?): number
+	if not armDistance or not unarmed or armDistance <= 0 then
+		return 1
+	end
+	return unarmed + (1 - unarmed) * math.clamp(flown / armDistance, 0, 1)
+end
+
 -- Smallest difference between two angles, in radians (0..pi).
 function Combat2D.angleDiff(a: number, b: number): number
 	return math.abs((a - b + math.pi) % (2 * math.pi) - math.pi)

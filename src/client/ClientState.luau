@@ -17,6 +17,7 @@ local ClientState = {
 	fireButtonHeld = false, -- mobile FIRE button (third-person)
 	cursorFree = false, -- third-person on PC: Left Alt held, cursor unlocked
 	menuOpen = false, -- the Garage is open: the mouse is free
+	lockTarget = nil :: Model?, -- the robot your shots are locked onto (D83), from InputController
 	actions = {} :: {
 		pick: (index: number) -> (),
 		useSkill: () -> (),

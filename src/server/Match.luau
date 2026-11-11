@@ -334,6 +334,28 @@ local function spawnPlayer(e: World.Entity, keep: boolean?)
 	markDirty(e)
 end
 
+-- Respawns after `delay` s unless the player left or already came back. A failed
+-- respawn is logged and tried again (up to 3 times), so nobody is left on the death
+-- screen (D83: a player who died in a boss arena wasn't revived).
+local function respawnLater(e: World.Entity, delay: number, keep: boolean?)
+	local player = e.player :: Player
+	local gen = e.generation
+	task.delay(delay, function()
+		for attempt = 1, 3 do
+			if World.byPlayer[player] ~= e or e.generation ~= gen or e.alive then
+				return
+			end
+			local ok, err = pcall(spawnPlayer, e, keep)
+			if e.alive then
+				return
+			end
+			warn(`[Match] respawn {attempt} failed for {player.Name}:`, if ok then "no robot after loading" else err)
+			gen = e.generation -- spawnPlayer moved it on
+			task.wait(1)
+		end
+	end)
+end
+
 -- Offers ----------------------------------------------------------------------
 
 local function ensureOffer(e: World.Entity)
@@ -511,12 +533,7 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 			keepsLevel = true,
 		})
 		markDirty(victim)
-		local arenaGen = victim.generation
-		task.delay(Config.Maps.arenaDeath.respawn, function()
-			if World.byPlayer[arenaPlayer] == victim and victim.generation == arenaGen then
-				spawnPlayer(victim, true) -- the level was kept at death, even if the fight ended meanwhile
-			end
-		end)
+		respawnLater(victim, Config.Maps.arenaDeath.respawn, true) -- the level was kept at death, even if the fight ended meanwhile
 		return
 	end
 
@@ -540,12 +557,7 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 	victim.offer, victim.pendingOffers = nil, 0
 	markDirty(victim)
 
-	local gen = victim.generation
-	task.delay(Config.Combat.RespawnDelay, function()
-		if World.byPlayer[player] == victim and victim.generation == gen then
-			spawnPlayer(victim)
-		end
-	end)
+	respawnLater(victim, Config.Combat.RespawnDelay)
 end
 
 -- A map swap (D81): every living robot (players and dummies) moves to a spawn point

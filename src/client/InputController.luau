@@ -78,6 +78,43 @@ local function softAim(root: BasePart): number?
 	return bestAngle
 end
 
+-- Lock-on (D83): the enemy robot closest to your aim line, within your weapon's reach
+-- and a few degrees of the aim (more for robots close enough to fill the view). Your
+-- shots then go straight at it; the crosshair shows the lock.
+local LOCK_DEGREES = 7
+local function lockOn(root: BasePart, aim: number): (Model?, number?)
+	local me = player.Character
+	local reach = (me and me:GetAttribute("AttackRange")) or SOFT_AIM_RANGE
+	local coop = string.sub(Workspace:GetAttribute("Map") or "", 1, 6) == "arena_" -- players are allies here
+	local p = root.Position
+	local best: Model?, bestAngle: number?, bestScore = nil, nil, math.huge
+	for _, model in CollectionService:GetTagged("Robot") do
+		if model == me or not model:IsA("Model") or model:GetAttribute("Protected") then
+			continue
+		end
+		if coop and (model:GetAttribute("UserId") or 0) ~= 0 then
+			continue
+		end
+		local r = model.PrimaryPart
+		if not r then
+			continue
+		end
+		local dx, dz = r.Position.X - p.X, r.Position.Z - p.Z
+		local dist = math.sqrt(dx * dx + dz * dz)
+		local hit = model:GetAttribute("HitRadius") or 3
+		if dist - hit > reach then
+			continue
+		end
+		local angle = math.atan2(dz, dx)
+		local off = math.abs((angle - aim + math.pi) % (2 * math.pi) - math.pi)
+		local allowed = math.max(math.rad(LOCK_DEGREES), math.atan(hit / math.max(dist, 1)))
+		if off <= allowed and off / allowed < bestScore then
+			best, bestAngle, bestScore = model, angle, off / allowed
+		end
+	end
+	return best, bestAngle
+end
+
 -- Dash -------------------------------------------------------------------------
 
 local dashParams = RaycastParams.new()
@@ -368,7 +405,8 @@ function InputController.init()
 			end
 			ClientState.localAim = ClientState.camYaw
 		else
-			UserInputService.MouseIconEnabled = true
+			-- Top-down on PC: the crosshair replaces the arrow, except in menus (D83).
+			UserInputService.MouseIconEnabled = ClientState.isTouch or ClientState.menuOpen
 		end
 		if not third and root then
 			if ClientState.isTouch then
@@ -384,6 +422,16 @@ function InputController.init()
 				if a then
 					ClientState.localAim = a
 				end
+			end
+		end
+
+		-- Lock onto the robot under the crosshair (D83).
+		ClientState.lockTarget = nil
+		if root then
+			local target, angle = lockOn(root, ClientState.localAim)
+			if target and angle then
+				ClientState.lockTarget = target
+				ClientState.localAim = angle
 			end
 		end
 

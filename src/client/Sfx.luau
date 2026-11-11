@@ -41,7 +41,7 @@ local SOUNDS: { [string]: Def } = {
 	Slam = { id = asset(9125672726), volume = 0.8, voices = 3 }, -- Metal Impact Sledge Hammer Hits
 	Rubble = { id = asset(9125869504), volume = 0.45, gap = 0.08, voices = 4 }, -- Rock Cracks Rock Hitting Rock Impact Debris
 	Deflect = { id = asset(9119072660), volume = 0.4, gap = 0.06, voices = 3 }, -- Shield Clang As Hit Metal Sword Hubcap 1
-	Zap = { id = asset(9116275998), volume = 0.45, voices = 3 }, -- Lightning Flashes Quick Electrical Bursts 13
+	Zap = { id = asset(9116275998), volume = 0.16, gap = 0.15, voices = 2 }, -- Lightning Flashes Quick Electrical Bursts 13 (quieter, D83)
 	Servo = { id = asset(9118360544), volume = 0.6, voices = 3 }, -- Robot Servo 1
 	TrapSnap = { id = asset(9119074309), volume = 0.55, voices = 3 }, -- Shield Impacts 2
 	Coin = { id = asset(9113849492), volume = 0.6, gap = 0.05, voices = 4 }, -- Coins Or Keys Jingle 6

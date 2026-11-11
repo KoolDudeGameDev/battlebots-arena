@@ -2,7 +2,9 @@
 -- for every hit (D43): yellow = you dealt it, red = you took it, blue = your
 -- armor took it, BLOCK = it deflected.
 
+local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
@@ -303,13 +305,82 @@ local function bolt(a: Vector3, b: Vector3)
 	Vfx.impact(b.X, b.Z, "shock", nil, nil, b.Y)
 end
 
+-- The Bomber's fuse (D83): a red ring at the blast's exact reach follows it, pulsing
+-- faster, the robot flashes red and beeps, for `seconds` until it detonates.
+local function fuse(x: number, z: number, radius: number, seconds: number, owner: any)
+	local model: Model? = nil
+	for _, m in CollectionService:GetTagged("Robot") do
+		if m:IsA("Model") and m:GetAttribute("EntityId") == owner then
+			model = m
+		end
+	end
+	local anchor = Instance.new("Part")
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.Size = Vector3.one * 0.2
+	anchor.CFrame = CFrame.new(x, 0.3, z)
+	anchor.Parent = folder
+	local ring = Instance.new("CylinderHandleAdornment")
+	ring.Adornee = anchor
+	ring.Radius = radius
+	ring.InnerRadius = math.max(0, radius - 1)
+	ring.Height = 0.1
+	ring.CFrame = CFrame.Angles(math.rad(90), 0, 0)
+	ring.Color3 = COLORS.warn
+	ring.Parent = anchor
+	local glow: Highlight? = nil
+	if model then
+		local h = Instance.new("Highlight")
+		h.FillColor = COLORS.warn
+		h.OutlineColor = Color3.fromRGB(255, 220, 120)
+		h.DepthMode = Enum.HighlightDepthMode.Occluded
+		h.Parent = model
+		glow = h
+	end
+	local start = os.clock()
+	local beeps = 0
+	local conn: RBXScriptConnection
+	conn = RunService.RenderStepped:Connect(function()
+		local t = os.clock() - start
+		if t >= seconds or (model and not model.Parent) then
+			conn:Disconnect()
+			anchor:Destroy()
+			if glow then
+				glow:Destroy()
+			end
+			return
+		end
+		local root = model and model.PrimaryPart
+		if root then
+			anchor.CFrame = CFrame.new(root.Position.X, 0.3, root.Position.Z)
+		end
+		local pulse = 0.5 + 0.5 * math.cos(t * (10 + 30 * t / seconds))
+		ring.Transparency = 0.1 + 0.5 * pulse
+		if glow then
+			glow.FillTransparency = 0.2 + 0.6 * pulse
+		end
+		if t >= beeps * seconds / 4 then
+			beeps += 1
+			Sfx.at("HitConfirm", anchor.Position + Vector3.new(0, 3, 0), 3)
+		end
+	end)
+end
+
 function Effects.init(fx: Folder)
 	folder = fx
 	Remotes.Effect.OnClientEvent:Connect(function(kind, x, z, radius, x2, z2, owner)
 		if type(x) ~= "number" or type(z) ~= "number" or type(radius) ~= "number" then
 			return
 		end
-		if kind == "beam" or kind == "laser" then
+		if kind == "fuse" then
+			fuse(x, z, radius, if type(x2) == "number" then x2 else 0.8, owner)
+		elseif kind == "detonation" then
+			Sfx.at("BigExplosion", Vector3.new(x, 3, z))
+			Vfx.detonation(x, z, radius)
+		elseif kind == "beam" or kind == "laser" then
 			if type(x2) == "number" and type(z2) == "number" then
 				if kind == "laser" then
 					beam(x, z, x2, z2, Color3.fromRGB(255, 50, 70), 0.6)

@@ -122,10 +122,10 @@ local function removeOrb(o: Orb, collectorUserId: number)
 end
 
 -- Spills `count` red death orbs worth `value` each around (x, z).
-function Pickups.spill(x: number, z: number, count: number, value: number)
+function Pickups.spill(x: number, z: number, count: number, value: number, spread: number?)
 	for _ = 1, count do
 		local a = rng:NextNumber(0, math.pi * 2)
-		local r = rng:NextNumber(1, 7)
+		local r = rng:NextNumber(1, spread or 7)
 		spawnOrb("death", x + math.cos(a) * r, z + math.sin(a) * r, value)
 	end
 end

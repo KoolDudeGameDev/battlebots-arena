@@ -330,6 +330,96 @@ function Vfx.explosion(x: number, z: number, radius: number, big: boolean?)
 	shake(d, if big then 0.5 else 0.35, 60)
 end
 
+-- The Bomber's detonation (D83): slower and heavier than a rocket. A fireball swells
+-- over 0.7 s, fire rolls outward in a wave, smoke climbs, the ground is torn into a
+-- crater with slabs of earth heaved up round its rim (they stay ~8 s, then sink away).
+function Vfx.detonation(x: number, z: number, radius: number)
+	local pos = Vector3.new(x, 2, z)
+	local ok, d = near(pos)
+	if not ok then
+		return
+	end
+	local k = math.clamp(radius / 9, 1, 4)
+	local function ball(color: Color3, from: number, to: number, seconds: number, transparency: number)
+		local p = Instance.new("Part")
+		p.Shape = Enum.PartType.Ball
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.CastShadow = false
+		p.Material = Enum.Material.Neon
+		p.Color = color
+		p.Transparency = transparency
+		p.Size = Vector3.one * from
+		p.CFrame = CFrame.new(x, 1, z)
+		p.Parent = folder
+		local t = TweenService:Create(p, TweenInfo.new(seconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.one * to, Transparency = 1 })
+		t.Completed:Once(function()
+			p:Destroy()
+		end)
+		t:Play()
+		return p
+	end
+	local core = ball(Color3.fromRGB(255, 240, 200), radius * 0.15, radius * 0.9, 0.5, 0)
+	local light = Instance.new("PointLight")
+	light.Color = Color3.fromRGB(255, 170, 80)
+	light.Range = radius * 2.5
+	light.Brightness = 5
+	light.Parent = core
+	ball(Color3.fromRGB(255, 120, 40), radius * 0.3, radius * 2, 0.75, 0.15)
+	-- Fire rolling outward in a wave, then smoke climbing.
+	for i = 0, 4 do
+		task.delay(i * 0.09, function()
+			local r = radius * (0.15 + 0.2 * i)
+			for j = 0, 7 do
+				local a = j * math.pi / 4 + i * 0.4
+				emit("fire", Vector3.new(x + math.cos(a) * r, 1.5, z + math.sin(a) * r), 2 * k)
+			end
+		end)
+	end
+	for i = 0, 3 do
+		task.delay(0.2 + i * 0.25, function()
+			emit("smoke", Vector3.new(x, 2 + i * 3, z), 5 * k)
+		end)
+	end
+	emit("sparks", pos, 30)
+	shockwave(x, z, radius, Color3.fromRGB(255, 170, 90))
+	edgeRing(x, z, radius, Color3.fromRGB(255, 150, 60))
+	debris(pos, 14, DIRT, Enum.Material.Ground, 1.2, 34)
+	debris(pos, 8, STONE, Enum.Material.Slate, 0.9, 40)
+	-- The crater: a scorched pit and heaved-up slabs of ground round its rim.
+	mark(x, z, radius * 0.45, Color3.fromRGB(20, 16, 14), 10)
+	mark(x, z, radius * 0.25, Color3.fromRGB(60, 28, 12), 6)
+	local rng = Random.new()
+	local slabs = math.clamp(math.floor(radius / 2.5), 8, 18)
+	for i = 1, slabs do
+		local a = i / slabs * math.pi * 2 + rng:NextNumber(-0.15, 0.15)
+		local r = radius * rng:NextNumber(0.32, 0.42)
+		local slab = Instance.new("Part")
+		slab.Anchored = true
+		slab.CanCollide = false
+		slab.CanQuery = false
+		slab.CanTouch = false
+		slab.Material = Enum.Material.Ground
+		slab.Color = DIRT:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0.2, 0.45))
+		slab.Size = Vector3.new(rng:NextNumber(2, 3.5), rng:NextNumber(0.6, 1.1), rng:NextNumber(2.5, 4)) * math.clamp(radius / 30, 0.7, 1.6)
+		local out = Vector3.new(math.cos(a), 0, math.sin(a))
+		local rest = CFrame.lookAt(Vector3.new(x, 0, z) + out * r, Vector3.new(x, 0, z) + out * (r + 1)) * CFrame.Angles(math.rad(rng:NextNumber(25, 45)), 0, 0)
+		slab.CFrame = rest - Vector3.new(0, 2, 0) -- starts buried, heaves up
+		slab.Parent = folder
+		TweenService:Create(slab, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { CFrame = rest + Vector3.new(0, 0.3, 0) }):Play()
+		task.delay(8 + rng:NextNumber(0, 1.5), function()
+			local sink = TweenService:Create(slab, TweenInfo.new(1.2), { CFrame = rest - Vector3.new(0, 2.5, 0), Transparency = 1 })
+			sink.Completed:Once(function()
+				slab:Destroy()
+			end)
+			sink:Play()
+		end)
+	end
+	shake(d, 0.8, 90)
+end
+
 -- Hammer slams (Sledgehammer, Forge Titan, Edge Hammers) and the Flipper's kick.
 function Vfx.slam(x: number, z: number, radius: number)
 	local pos = Vector3.new(x, 0.5, z)

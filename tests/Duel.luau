@@ -67,7 +67,8 @@ local function shot(f, t, d: number, speedFraction: number): (number, number)
 	local dev = Stats.inaccuracy(Config, speedFraction)
 	local half = math.deg(math.atan(t.s.hitRadius / d))
 	local p = math.clamp(half / dev, 0, 1)
-	local direct = w.damage * s.damageMult
+	local arm = Combat2D.armFactor(d, w.armDistance, w.unarmed) -- rockets arm in flight (D83)
+	local direct = w.damage * s.damageMult * arm
 	local push = Combat2D.knockback(w.knockback or 0, t.s.scale, t.s.mass)
 	if not w.splashRadius then
 		return p * direct, 0
@@ -75,7 +76,7 @@ local function shot(f, t, d: number, speedFraction: number): (number, number)
 	-- A near miss still lands splash, at the average miss angle.
 	local miss = d * math.tan(math.rad((half + dev) / 2)) - t.s.hitRadius
 	local falloff = if miss <= w.splashRadius then Combat2D.splashFactor(math.max(0, miss), w.splashRadius, Config.Combat.SplashEdge) else 0
-	local splash = w.splashDamage * s.damageMult * falloff
+	local splash = w.splashDamage * s.damageMult * falloff * arm
 	return p * direct + (1 - p) * splash, push * (p + (1 - p) * falloff)
 end
 

@@ -550,9 +550,9 @@ end
 
 -- Splash and ricochet ---------------------------------------------------------
 
-local function splash(p: Projectile, owner: World.Entity?, x: number, z: number, directId: number?, directCrate: number?)
+local function splash(p: Projectile, owner: World.Entity?, x: number, z: number, directId: number?, directCrate: number?, arm: number?)
 	local r = p.splashRadius :: number
-	local dmg = p.splashDamage :: number
+	local dmg = (p.splashDamage :: number) * (arm or 1)
 	local edge = Config.Combat.SplashEdge
 	Remotes.Effect:FireAllClients("explosion", x, z, r)
 	for _, e in World.entities do
@@ -666,6 +666,9 @@ local function fireGun(e: World.Entity, kind: string, w)
 				splashDamage = w.splashDamage * s.damageMult * factor,
 				splashRadius = w.splashRadius,
 				knockback = w.knockback,
+				armDistance = w.armDistance, -- rockets arm in flight (D83)
+				unarmed = w.unarmed,
+				range0 = range,
 			})
 		else
 			local code = if (st.mod_ricochet or 0) > 0 then RICOCHET_CODE else w.code
@@ -868,30 +871,43 @@ local function dropTrap(e: World.Entity, def, damage: number, t: number): boolea
 	if #mine >= def.maxTraps then
 		removeTrap(mine[1]) -- the oldest
 	end
+	-- A field of caltrops (D83, were hard to see): steel jacks with red tips, scattered
+	-- over the trap's area, on a faint red ring that shows exactly where it bites.
 	local p = Instance.new("Part")
 	p.Name = "SpikeTrap"
 	p.Shape = Enum.PartType.Cylinder
-	p.Size = Vector3.new(0.4, def.radius * 2, def.radius * 2)
-	p.CFrame = CFrame.new(x, 0.2, z) * CFrame.Angles(0, 0, math.rad(90))
-	p.Color = Color3.fromRGB(60, 60, 66)
-	p.Material = Enum.Material.DiamondPlate
+	p.Size = Vector3.new(0.1, def.radius * 2, def.radius * 2)
+	p.CFrame = CFrame.new(x, 0.06, z) * CFrame.Angles(0, 0, math.rad(90))
+	p.Color = Color3.fromRGB(220, 50, 40)
+	p.Material = Enum.Material.Neon
+	p.Transparency = 0.75
 	p.Anchored = true
 	p.CanCollide = false
 	p.CanQuery = false
 	p.CanTouch = false
-	for k = 0, 5 do
-		local a = k * math.pi / 3
-		local spike = Instance.new("Part")
-		spike.Name = "Spike"
-		spike.Size = Vector3.new(0.35, 0.9, 0.35)
-		spike.CFrame = CFrame.new(x + math.cos(a) * def.radius * 0.55, 0.65, z + math.sin(a) * def.radius * 0.55)
-		spike.Color = Color3.fromRGB(200, 60, 50)
-		spike.Material = Enum.Material.Metal
-		spike.Anchored = true
-		spike.CanCollide = false
-		spike.CanQuery = false
-		spike.CanTouch = false
-		spike.Parent = p
+	local function piece(size: Vector3, cf: CFrame, color: Color3, material: Enum.Material)
+		local q = Instance.new("Part")
+		q.Name = "Caltrop"
+		q.Size = size
+		q.CFrame = cf
+		q.Color = color
+		q.Material = material
+		q.Anchored = true
+		q.CanCollide = false
+		q.CanQuery = false
+		q.CanTouch = false
+		q.CastShadow = false
+		q.Parent = p
+	end
+	for k = 1, 4 do -- 4 jacks x 7 parts: cheap enough for many traps at once
+		local a = k * 2 * math.pi / 4 + rng:NextNumber(-0.3, 0.3)
+		local d = if k == 1 then 0 else def.radius * rng:NextNumber(0.35, 0.7)
+		local centre = CFrame.new(x + math.cos(a) * d, 0.55, z + math.sin(a) * d) * CFrame.Angles(rng:NextNumber(0, 6.3), rng:NextNumber(0, 6.3), rng:NextNumber(0, 6.3))
+		piece(Vector3.new(0.4, 0.4, 0.4), centre, Color3.fromRGB(70, 72, 78), Enum.Material.Metal)
+		for _, axis in { CFrame.identity, CFrame.Angles(0, 0, math.rad(90)), CFrame.Angles(math.rad(90), 0, 0) } do
+			piece(Vector3.new(0.18, 1.3, 0.18), centre * axis, Color3.fromRGB(150, 152, 158), Enum.Material.Metal)
+			piece(Vector3.new(0.2, 0.2, 0.2), centre * axis * CFrame.new(0, 0.68, 0), Color3.fromRGB(230, 40, 30), Enum.Material.Neon)
+		end
 	end
 	p.Parent = trapFolder
 	table.insert(traps, { ownerId = e.id, x = x, z = z, armAt = t + def.armDelay, dieAt = t + def.life, damage = damage, part = p })
@@ -1111,36 +1127,38 @@ local function stepProjectiles(dt: number, fields: { any })
 		if bestT ~= nil then
 			local hx, hz = x1 + (x2 - x1) * bestT, z1 + (z2 - z1) * bestT
 			endProjectile(i, p, true)
+			-- Bombard rockets hit weaker before they have armed (D83).
+			local arm = if pa.armDistance then Combat2D.armFactor(pa.range0 - p.remaining + step * bestT, pa.armDistance, pa.unarmed) else 1
 			if hitBody and p.net then
 				local shielded = t < hitBody.e.shieldUntil or hitBody.e.god
 				if not shielded and not (Arena.isArena() and hitBody.e.player and owner and owner.player) then -- co-op arena: no nets on players
 					Combat.applyNet(hitBody.e, hx, hz)
 				end
 			elseif hitBody then
-				Combat.damage(hitBody.e, p.damage, owner, false, hx, hz)
+				Combat.damage(hitBody.e, p.damage * arm, owner, false, hx, hz)
 				if p.splashRadius then
-					splash(p, owner, hx, hz, hitBody.e.id, nil)
+					splash(p, owner, hx, hz, hitBody.e.id, nil, arm)
 				end
 				if owner then
 					ricochet(p, owner, hx, hz, hitBody.e.id, nil)
 				end
 			elseif hitCrate then
 				if p.damage > 0 then -- Bomber nets just stop on crates
-					Pickups.damageCrate(hitCrate, p.damage, owner)
+					Pickups.damageCrate(hitCrate, p.damage * arm, owner)
 				end
 				if p.splashRadius then
-					splash(p, owner, hx, hz, nil, hitCrate.id)
+					splash(p, owner, hx, hz, nil, hitCrate.id, arm)
 				end
 				if owner then
 					ricochet(p, owner, hx, hz, nil, hitCrate.id)
 				end
 			elseif hitWall then
-				damageWall(hitWall, p.damage)
+				damageWall(hitWall, p.damage * arm)
 				if p.splashRadius then
-					splash(p, owner, hx, hz, nil, nil)
+					splash(p, owner, hx, hz, nil, nil, arm)
 				end
 			elseif wallT ~= nil and p.splashRadius then
-				splash(p, owner, hx, hz, nil, nil)
+				splash(p, owner, hx, hz, nil, nil, arm)
 			end
 		else
 			p.x, p.z = x2, z2
@@ -1288,26 +1306,37 @@ local function useSkill(e: World.Entity)
 		local c = Chassis.byId[e.chassisId] or Chassis.byId[Chassis.default]
 		local radius = Stats.attackRange(Config, Upgrades.primaryFor(e.build.stacks) or c.primary, e.stats, e.build)
 		local damage = S.damage * (1 + S.damagePerRank * (rank - 1)) * e.stats.damageMult
-		Remotes.Effect:FireAllClients("explosion", x, z, radius)
-		for _, tg in targets(e.id, true) do
-			local dist = math.sqrt((tg.x - x) ^ 2 + (tg.z - z) ^ 2)
-			if dist <= radius + tg.r then
-				local falloff = Combat2D.splashFactor(math.max(0, dist - tg.r), radius, S.edge)
-				if tg.e then
-					Combat.damage(tg.e, damage * falloff, e, true, tg.x, tg.z)
-					knock(tg.e, x, z, S.knockback * falloff)
-				elseif tg.crate then
-					Pickups.damageCrate(tg.crate, damage * falloff, e)
+		-- The fuse (D83): the Bomber glows and beeps for S.fuse s first, so robots nearby
+		-- can run. It blasts wherever it is when the fuse runs out; dead Bombers don't.
+		e.skillReadyAt = t + S.fuse + S.cooldown
+		Remotes.Effect:FireAllClients("fuse", x, z, radius, S.fuse, 0, e.id)
+		local gen = e.generation
+		task.delay(S.fuse, function()
+			if not e.alive or e.generation ~= gen or e.build.small then
+				return
+			end
+			local bx, bz = World.position(e)
+			Remotes.Effect:FireAllClients("detonation", bx, bz, radius)
+			for _, tg in targets(e.id, true) do
+				local dist = math.sqrt((tg.x - bx) ^ 2 + (tg.z - bz) ^ 2)
+				if dist <= radius + tg.r then
+					local falloff = Combat2D.splashFactor(math.max(0, dist - tg.r), radius, S.edge)
+					if tg.e then
+						Combat.damage(tg.e, damage * falloff, e, true, tg.x, tg.z)
+						knock(tg.e, bx, bz, S.knockback * falloff)
+					elseif tg.crate then
+						Pickups.damageCrate(tg.crate, damage * falloff, e)
+					end
 				end
 			end
-		end
-		-- The bombs are spent: 25% HP (if it had more) and the small, fast form.
-		e.hp = math.min(e.hp, e.stats.maxHp * Config.Bomber.hpAfter)
-		e.armor = 0
-		syncHp(e)
-		syncArmor(e)
-		e.skillReadyAt = t + S.cooldown
-		World.hooks.setSmall(e, true)
+			-- The bombs are spent: 25% HP (if it had more) and the small, fast form.
+			e.hp = math.min(e.hp, e.stats.maxHp * Config.Bomber.hpAfter)
+			e.armor = 0
+			syncHp(e)
+			syncArmor(e)
+			e.skillReadyAt = now() + S.cooldown
+			World.hooks.setSmall(e, true)
+		end)
 	elseif skill == "skl_nullfield" then
 		if t < e.skillReadyAt then
 			return
@@ -1348,7 +1377,8 @@ local function tickSustain(e: World.Entity, t: number, dt: number)
 		Combat.syncGuard(e)
 	end
 	local maxArmor = e.stats.maxArmor
-	if maxArmor > 0 and e.armor < maxArmor and t - e.lastHitAt >= Config.Armor.regenDelay then
+	local regenDelay = Config.Armor.regenDelayByChassis[e.chassisId] or Config.Armor.regenDelay
+	if maxArmor > 0 and e.armor < maxArmor and t - e.lastHitAt >= regenDelay then
 		e.armor = math.min(maxArmor, e.armor + maxArmor * Config.Armor.regenPerSecond * dt)
 		syncArmor(e)
 	end

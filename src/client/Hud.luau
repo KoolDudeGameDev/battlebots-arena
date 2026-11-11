@@ -79,7 +79,6 @@ local armorText: TextLabel
 local regenPill: TextLabel
 local armorPill: TextLabel
 local fortifyPill: TextLabel
-local crosshair: Frame
 local camButton: TextButton?
 local fireButton: TextButton?
 local tray: Frame
@@ -708,17 +707,6 @@ local function buildControls()
 	text(hint, { Position = UDim2.fromOffset(10, 67), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "1 / 2 / 3 · Pick upgrade" })
 	text(hint, { Position = UDim2.fromOffset(10, 88), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "Hold ALT · Free the mouse" })
 
-	-- Third-person crosshair (D37)
-	crosshair = new("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(10, 10),
-		BackgroundColor3 = Color3.new(1, 1, 1),
-		BackgroundTransparency = 0.2,
-		Visible = false,
-	}, gui)
-	corner(crosshair, 5)
-	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.3 }, crosshair)
 
 	if isTouch then
 		local skill: TextButton = new("TextButton", {
@@ -841,7 +829,6 @@ local function perFrame()
 
 	-- Camera mode
 	local third = ClientState.camMode == "third"
-	crosshair.Visible = third
 	if fireButton then
 		fireButton.Visible = third
 		if not third then

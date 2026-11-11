@@ -640,7 +640,7 @@ function Robots.init(folder: Folder)
 				if attacking then
 					v.spin += dt * (swing:GetAttribute("SwingRate") or 1) * 2 * math.pi
 				end
-				swingMotor.C0 = base * CFrame.Angles(0, v.spin, 0)
+				swingMotor.C0 = base * CFrame.Angles(0, -v.spin, 0) -- clockwise seen from above: the blade's edge leads (D83)
 			end
 			-- Vertical Saw on the back: always spinning.
 			local sideSaw = body and body:FindFirstChild("SideSaw")

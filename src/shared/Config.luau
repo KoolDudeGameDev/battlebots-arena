@@ -121,8 +121,10 @@ Config.Weapons = {
 	-- Bombard's primary (D44, D45): rockets launch slow and accelerate.
 	launcher = {
 		code = 7, -- its own look: twice the Rocket Pod's size (D80)
-		damage = 26,
-		splashDamage = 22,
+		-- D83: 26 -> 34 and 22 -> 25, held fair by arming below: the most the duel model
+		-- (tests/Duel.spec, D66) allows before a charger stops winning in open ground.
+		damage = 34,
+		splashDamage = 25,
 		splashRadius = 24, -- doubled (D80)
 		fireRate = 1.2,
 		launchSpeed = 40,
@@ -131,6 +133,10 @@ Config.Weapons = {
 		range = 55,
 		radius = 1.4, -- doubled with the splash (D80)
 		knockback = 6, -- studs of push on a scale-1 robot at the blast centre
+		-- Rockets arm in flight (D83): a hit after `armDistance` studs does full damage;
+		-- point-blank it does `unarmed` of it. Strong at range, weak when caught.
+		armDistance = 30,
+		unarmed = 0.15,
 	},
 	-- Rare variants (D67). The laser is a hitscan beam: damage per tick, 10 ticks/s
 	-- (70 DPS vs the blaster's 48), stopped by the first robot or cover.
@@ -230,7 +236,9 @@ Config.Skills = {
 	-- Bomber's built-in skill (D70): only in big form. Splash damage with falloff.
 	-- Detonate (D80): the blast fills the drawn attack ring (Stats.attackRange); damage at the
 	-- ring's edge is `edge` of the centre damage.
-	skl_bomb = { cooldown = 2, damage = 300, edge = 0.5, damagePerRank = 0.25, knockback = 16 },
+	-- fuse (D83): seconds of glowing, beeping warning between pressing Space and the blast.
+	-- If the Bomber dies during the fuse there is no blast.
+	skl_bomb = { cooldown = 2, damage = 300, edge = 0.5, damagePerRank = 0.25, knockback = 16, fuse = 0.8 },
 	-- Null Field (D68): a big bubble around you; enemy shots inside crawl (dodgeable)
 	-- and enemy robots inside drive at half speed. Beams, flames and melee are not slowed.
 	skl_nullfield = { radius = 18, radiusPerRank = 4, duration = 3, durationPerRank = 1, cooldown = 15, projectileSlow = 0.25, robotSlow = 0.5 },
@@ -283,6 +291,11 @@ Config.Bosses = {
 	damagePerLevel = 0.01, -- +1% boss damage per average player level
 	reward = { coins = 100, xp = 600, scatterCoins = 12, scatterOrbs = 10, scatterOrbValue = 30 },
 	hazardDuration = 360,
+	lootSpread = { 10, 32 }, -- studs from the boss: coins and orbs scatter this far (D83)
+	-- Touching a boss (D83): robots are shoved out of it and take this much damage per
+	-- contactEvery s (times the level multiplier), so nobody can drive through one.
+	contactEvery = 0.5,
+	contactPush = 14,
 	chaseRange = 160, -- it hunts the nearest robot within this; otherwise walks to the centre
 	list = {
 		inferno = {
@@ -293,7 +306,9 @@ Config.Bosses = {
 			speed = 9,
 			hazard = "vents",
 			-- A long cone of fire for 1 s that sets robots burning.
-			attack = { kind = "flame", every = 2.2, duration = 1, range = 34, coneDegrees = 70, damage = 36, burnDps = 12, burnDuration = 3 }, -- D82: harder
+			-- windup (D83): red warning circles on the ground for this long before the fire.
+			attack = { kind = "flame", every = 2.2, windup = 0.8, duration = 1, range = 34, coneDegrees = 70, damage = 36, burnDps = 12, burnDuration = 3 }, -- D82: harder
+			contactDamage = 12,
 		},
 		forge = {
 			name = "Forge Titan",
@@ -305,6 +320,7 @@ Config.Bosses = {
 			hazard = "hammers",
 			-- A red warning circle, then the hammer lands on it.
 			attack = { kind = "smash", every = 2.5, windup = 0.8, reach = 6, radius = 16, damage = 60, knockback = 20 }, -- radius 12 -> 16 (D80); harder (D82)
+			contactDamage = 15,
 		},
 		grinder = {
 			name = "Grinder",
@@ -315,7 +331,9 @@ Config.Bosses = {
 			speed = 10,
 			hazard = "saws",
 			-- Charges at a robot with its saws spinning, hurting everything it hits.
-			attack = { kind = "charge", every = 4, duration = 1.2, speedMult = 3.5, damage = 45, knockback = 18 }, -- D82: harder
+			-- A charge hits each robot every hitEvery s while it stays in the way (D83, was once).
+			attack = { kind = "charge", every = 4, duration = 1.2, speedMult = 3.5, damage = 45, knockback = 18, hitEvery = 0.35 }, -- D82: harder
+			contactDamage = 25, -- its saws grind whatever touches it
 		},
 	},
 }
@@ -408,6 +426,7 @@ Config.Armor = {
 	deflectPerStack = 0.05,
 	deflectCap = 0.30,
 	regenDelay = 4.5, -- seconds without taking damage (D80)
+	regenDelayByChassis = { brawler = 8 }, -- D83: the Brawler must stay out of the fight longer
 	regenPerSecond = 0.10, -- fraction of max armor (D80)
 	tempDeflect = 0.10, -- deflect chance of Armor Pod armor without plating
 }

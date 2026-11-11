@@ -52,7 +52,8 @@ type Active = {
 	nextAttackAt: number,
 	busyUntil: number, -- mid-attack: it stops walking
 	chargeDir: Vector3?,
-	chargeHit: { [number]: boolean },
+	chargeHit: { [number]: number }, -- robot id -> when the charge last hit it
+	contactAt: { [number]: number }, -- robot id -> when touching the boss last hurt it
 	dmg: number, -- damage multiplier from the players' levels (D82)
 }
 local active: Active? = nil
@@ -102,16 +103,29 @@ local function hitArea(a: Active, cx: number, cz: number, radius: number, damage
 	end
 end
 
--- Inferno Giant: a cone of fire in front for `duration` s, burning what it touches.
+-- Inferno Giant: red warning circles where the fire will land (D83), then after
+-- `windup` s a cone of fire in front for `duration` s, burning what it touches.
 local function flameAttack(a: Active, atk)
 	local e = a.e
 	local gen = e.generation
-	if e.model then
-		e.model:SetAttribute("Firing", true)
+	do
+		local x, z = World.position(e)
+		local reach = atk.range + World.hitRadius(e, Config)
+		local spread = math.tan(math.rad(atk.coneDegrees / 2))
+		for k = 1, 3 do
+			local d = reach * (k - 0.35) / 3
+			Remotes.Effect:FireAllClients("warn", x + math.cos(e.aim) * d, z + math.sin(e.aim) * d, math.max(4, d * spread))
+		end
 	end
+	local windup = atk.windup or 0
+	task.delay(windup, function()
+		if e.model and e.alive and e.generation == gen then
+			e.model:SetAttribute("Firing", true)
+		end
+	end)
 	local ticks = 5
 	for i = 1, ticks do
-		task.delay(atk.duration * (i - 1) / ticks, function()
+		task.delay(windup + atk.duration * (i - 1) / ticks, function()
 			if not e.alive or e.generation ~= gen then
 				return
 			end
@@ -133,12 +147,12 @@ local function flameAttack(a: Active, atk)
 			end
 		end)
 	end
-	task.delay(atk.duration, function()
+	task.delay(windup + atk.duration, function()
 		if e.model and e.generation == gen then
 			e.model:SetAttribute("Firing", false)
 		end
 	end)
-	a.busyUntil = now() + atk.duration
+	a.busyUntil = now() + windup + atk.duration
 end
 
 -- Forge Titan: a red warning circle in front, then the hammer smashes down on it.
@@ -218,6 +232,7 @@ local function spawnArenaBoss(key: string)
 		busyUntil = 0,
 		chargeDir = nil,
 		chargeHit = {},
+		contactAt = {},
 		dmg = HazardTiming.bossDamageMult(B, levels),
 	}
 	announce(`{def.name} is here! Everyone who hits it shares the reward.`)
@@ -260,10 +275,10 @@ function Bosses.died(e: World.Entity, x: number, z: number)
 		end
 	end
 	for _ = 1, B.reward.scatterCoins do
-		local ang, r = rng:NextNumber(0, math.pi * 2), rng:NextNumber(4, 16)
+		local ang, r = rng:NextNumber(0, math.pi * 2), rng:NextNumber(B.lootSpread[1], B.lootSpread[2])
 		Pickups.spawnCoin(x + math.cos(ang) * r, z + math.sin(ang) * r)
 	end
-	Pickups.spill(x, z, B.reward.scatterOrbs, B.reward.scatterOrbValue)
+	Pickups.spill(x, z, B.reward.scatterOrbs, B.reward.scatterOrbValue, B.lootSpread[2])
 	announce(`{a.def.name} destroyed! {paid} player{if paid == 1 then "" else "s"} earned {B.reward.coins} coins and {B.reward.xp} XP.`)
 	active = nil
 	Bosses.stopHazard()
@@ -324,6 +339,18 @@ local function tickBoss(dt: number)
 	local atk = a.def.attack
 	smashCover(e)
 	local x, z = World.position(e)
+	-- Nobody drives through a boss (D83): robots touching it are shoved out and hurt.
+	local bossR = World.hitRadius(e, Config)
+	for _, v in aliveRobots() do
+		local vx, vz = World.position(v)
+		if (vx - x) ^ 2 + (vz - z) ^ 2 <= (bossR + World.hitRadius(v, Config)) ^ 2 then
+			if t - (a.contactAt[v.id] or -math.huge) >= B.contactEvery then
+				a.contactAt[v.id] = t
+				Combat.damage(v, (a.def.contactDamage or 0) * a.dmg, e, false, vx, vz)
+				Combat.knock(v, x, z, B.contactPush)
+			end
+		end
+	end
 
 	-- Charging (Grinder): straight line, hurting each robot once.
 	if a.chargeDir and t < a.busyUntil then
@@ -335,10 +362,10 @@ local function tickBoss(dt: number)
 		face(a, nx, nz, dir)
 		local reach = World.hitRadius(e, Config)
 		for _, v in aliveRobots() do
-			if not a.chargeHit[v.id] then
+			if t - (a.chargeHit[v.id] or -math.huge) >= atk.hitEvery then
 				local vx, vz = World.position(v)
 				if (vx - nx) ^ 2 + (vz - nz) ^ 2 <= (reach + World.hitRadius(v, Config)) ^ 2 then
-					a.chargeHit[v.id] = true
+					a.chargeHit[v.id] = t
 					Combat.damage(v, atk.damage * a.dmg, e, false, vx, vz)
 					Combat.knock(v, nx, nz, atk.knockback)
 				end
