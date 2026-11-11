@@ -34,9 +34,26 @@ function HazardTiming.pingPong(length: number, speed: number, t: number): number
 	return if d <= length then d else 2 * length - d
 end
 
--- Boss HP for the number of players in the server.
-function HazardTiming.bossHp(bosses: any, players: number): number
-	return bosses.hpBase + bosses.hpPerPlayer * players
+-- Boss HP for the players in the fight (D82): a base, plus a share per player
+-- that grows with their level, so a strong player can't burst it down alone.
+function HazardTiming.bossHp(bosses: any, levels: { number }): number
+	local hp = bosses.hpBase
+	for _, level in levels do
+		hp += bosses.hpPerPlayer + bosses.hpPerLevel * level
+	end
+	return hp
+end
+
+-- How much harder the boss hits (D82): +damagePerLevel per average player level.
+function HazardTiming.bossDamageMult(bosses: any, levels: { number }): number
+	if #levels == 0 then
+		return 1
+	end
+	local sum = 0
+	for _, level in levels do
+		sum += level
+	end
+	return 1 + bosses.damagePerLevel * sum / #levels
 end
 
 return HazardTiming

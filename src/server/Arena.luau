@@ -180,6 +180,7 @@ local function setLighting(name: string)
 	Lighting.ClockTime = L.clock
 	Lighting.Brightness = L.brightness
 	Lighting.OutdoorAmbient = color(L.ambient)
+	Lighting.Ambient = color(L.ambient):Lerp(Color3.new(0, 0, 0), 0.45) -- under overhangs: darker, never black (D82)
 	Lighting.GlobalShadows = true
 	local function ensure(className: string, props: { [string]: any })
 		local existing = Lighting:FindFirstChildOfClass(className)
@@ -286,6 +287,20 @@ local KIND = {
 }
 local CONTAINER = { Color3.fromRGB(47, 110, 142), Color3.fromRGB(184, 73, 46), Color3.fromRGB(94, 122, 58) }
 
+local function hexColor(h: number): Color3
+	return Color3.fromRGB(bit32.rshift(h, 16), bit32.band(bit32.rshift(h, 8), 255), bit32.band(h, 255))
+end
+-- Each map's own materials (D82, bible palettes 9.3): the boundary wall and every cover
+-- kind it overrides. Grassland keeps KIND.
+local THEME: { [string]: { [string]: { any } } } = {
+	forge_highlands = { wall = { Enum.Material.Slate, hexColor(0x6F6A63) }, stone = { Enum.Material.Slate, hexColor(0x6F6A63) }, metal = { Enum.Material.Metal, hexColor(0x3B3F45) } },
+	inferno_fields = { wall = { Enum.Material.Basalt, hexColor(0x34302E) }, stone = { Enum.Material.Basalt, hexColor(0x34302E) } },
+	grinder_scrapyard = { wall = { Enum.Material.CorrodedMetal, hexColor(0x4A4440) }, stone = { Enum.Material.Concrete, hexColor(0x8A847A) }, metal = { Enum.Material.DiamondPlate, hexColor(0x3F4A55) } },
+	arena_forge = { wall = { Enum.Material.Metal, hexColor(0x4A4541) }, stone = { Enum.Material.Metal, hexColor(0x55504B) }, metal = { Enum.Material.Metal, hexColor(0x34302E) } },
+	arena_inferno = { wall = { Enum.Material.Basalt, hexColor(0x2C2628) }, stone = { Enum.Material.Basalt, hexColor(0x2C2628) } },
+	arena_grinder = { wall = { Enum.Material.CorrodedMetal, hexColor(0x4A4440) }, stone = { Enum.Material.CorrodedMetal, hexColor(0x4A4440) }, metal = { Enum.Material.DiamondPlate, hexColor(0x5A646E) } },
+}
+
 local function obbFrame(b: any, y: number): CFrame
 	return CFrame.fromMatrix(Vector3.new(b.cx, y, b.cz), Vector3.new(b.ux, 0, b.uz), Vector3.yAxis)
 end
@@ -298,11 +313,12 @@ local function crackBand(size: Vector3, cf: CFrame, parent: Instance): Part
 end
 
 local function buildBox(b: any, parent: Instance, rng: Random): { Instance }
-	local style = KIND[b.kind] or KIND.stone
+	local theme = THEME[current.name]
+	local style = (theme and theme[b.kind]) or KIND[b.kind] or KIND.stone
 	local col = style[2]
 	if b.name == "ContainerStack" or b.name == "SortingBin" then
 		col = CONTAINER[(b.id % #CONTAINER) + 1]
-	elseif b.kind == "stone" then
+	elseif b.kind == "stone" and not theme then
 		local shade = rng:NextInteger(-12, 12)
 		col = Color3.fromRGB(128 + shade, 124 + shade, 116 + shade)
 	end
@@ -316,6 +332,13 @@ local function buildBox(b: any, parent: Instance, rng: Random): { Instance }
 	if b.d then
 		table.insert(parts, crackBand(size + Vector3.new(0.3, 0.4 - b.h, 0.3), obbFrame(b, b.h * 0.6), parent))
 	end
+	-- Forge Foundry props (D82): a glowing billet on each anvil, molten metal in each mould.
+	if b.name == "Anvil" then
+		table.insert(parts, block("AnvilFace", size + Vector3.new(0.2, 0.6 - b.h, 0.2), obbFrame(b, b.h + 0.3), Color3.fromRGB(40, 38, 36), Enum.Material.Metal, parent, false))
+		table.insert(parts, block("HotBillet", Vector3.new(b.hu * 1.2, 0.5, b.hv * 0.5), obbFrame(b, b.h + 0.85), Color3.fromRGB(255, 130, 40), Enum.Material.Neon, parent, false))
+	elseif b.name == "CastingMould" then
+		table.insert(parts, block("Molten", Vector3.new(b.hu * 1.5, 0.2, b.hv * 1.5), obbFrame(b, b.h + 0.05), Color3.fromRGB(255, 110, 30), Enum.Material.Neon, parent, false))
+	end
 	return parts
 end
 
@@ -328,7 +351,8 @@ local function buildCircle(c: any, parent: Instance, rng: Random): { Instance }
 		buildRock(c, parent, rng)
 		return {}
 	end
-	local style = KIND[c.kind] or KIND.stone
+	local theme = THEME[current.name]
+	local style = (theme and theme[c.kind]) or KIND[c.kind] or KIND.stone
 	local parts: { Instance } = {}
 	local post = block(c.name, Vector3.new(c.h, c.r * 2, c.r * 2), CFrame.new(c.x, c.h / 2, c.z) * CFrame.Angles(0, 0, math.rad(90)), style[2], style[1], parent)
 	post.Shape = Enum.PartType.Cylinder
@@ -342,6 +366,15 @@ local function buildCircle(c: any, parent: Instance, rng: Random): { Instance }
 		band.Shape = Enum.PartType.Cylinder
 		table.insert(parts, band)
 	end
+	-- Inferno basalt columns (D82): lava glowing in the cracks at the foot and on top.
+	if c.name == "BasaltColumn" then
+		for _, y in { 0.6, c.h + 0.05 } do
+			local glow = block("LavaGlow", Vector3.new(0.3, c.r * 2 + 0.2, c.r * 2 + 0.2), CFrame.new(c.x, y, c.z) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(255, 90, 26), Enum.Material.Neon, parent, false)
+			glow.Shape = Enum.PartType.Cylinder
+			glow.Transparency = 0.15
+			table.insert(parts, glow)
+		end
+	end
 	return parts
 end
 
@@ -350,6 +383,224 @@ local function disc(name: string, x: number, z: number, radius: number, col: Col
 	p.Shape = Enum.PartType.Cylinder
 	p.Transparency = 0.6
 	return p
+end
+
+-- Boss arena dressing (D82, bible 5.5-5.7) ------------------------------------------
+-- Cosmetic only (no collision, no queries): nothing here changes where robots can go
+-- or what blocks shots. Everything sits flat on the wall faces, on the floor as paint,
+-- outside the walls or above them, so the play floor stays exactly as the layout says.
+
+local function light(parent: Instance, className: string, props: { [string]: any }): Instance
+	local l = Instance.new(className)
+	for k, v in props do
+		(l :: any)[k] = v
+	end
+	l.Parent = parent
+	return l
+end
+
+type Face = { pos: Vector3, face: Vector3, straight: boolean }
+
+-- The middle of each inner wall face of an arena (4 straight, 4 diagonal corner
+-- faces), with the direction that faces the centre.
+local function wallFaces(half: number): { Face }
+	local out: { Face } = {}
+	for _, d in { Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis } do
+		table.insert(out, { pos = d * half, face = -d, straight = true })
+	end
+	-- Corner walls: boxes about `half` wide, turned 45 degrees and centred on the corners.
+	local diag = half * math.sqrt(2) - half / 2
+	for _, d in { Vector3.new(1, 0, 1), Vector3.new(-1, 0, 1), Vector3.new(-1, 0, -1), Vector3.new(1, 0, -1) } do
+		table.insert(out, { pos = d.Unit * diag, face = -d.Unit, straight = false })
+	end
+	return out
+end
+
+-- A panel flat on a wall face, `along` studs sideways, centred at height y, `out`
+-- studs in front of the face.
+local function onWall(f: Face, along: number, y: number, out: number): CFrame
+	local side = Vector3.new(-f.face.Z, 0, f.face.X)
+	local p = f.pos + side * along + f.face * out
+	local at = Vector3.new(p.X, y, p.Z)
+	return CFrame.lookAt(at, at - f.face)
+end
+
+local function nearGate(map: any, pos: Vector3): boolean
+	return map.gate ~= nil and (Vector3.new(map.gate.x, 0, map.gate.z) - pos).Magnitude < 30
+end
+
+local CORNERS = { Vector3.new(1, 0, 1), Vector3.new(-1, 0, 1), Vector3.new(-1, 0, -1), Vector3.new(1, 0, -1) }
+
+-- Forge Foundry: an iron floor with glowing seams, furnace mouths, crucibles on chains.
+local function decorForge(map: any, decor: Folder)
+	local half = map.half
+	local ORANGE = Color3.fromRGB(255, 122, 26)
+	for i = -96, 96, 32 do
+		for _, alongZ in { true, false } do
+			local size = if alongZ then Vector3.new(0.35, 0.06, half * 2 - 4) else Vector3.new(half * 2 - 4, 0.06, 0.35)
+			local seam = block("FloorSeam", size, CFrame.new(if alongZ then i else 0, 0.03, if alongZ then 0 else i), ORANGE, Enum.Material.Neon, decor, false)
+			seam.Transparency = 0.35
+		end
+	end
+	for _, f in wallFaces(half) do
+		if nearGate(map, f.pos) then
+			continue
+		end
+		block("FurnaceFrame", Vector3.new(14, 11, 0.3), onWall(f, 0, 6, 0.15), Color3.fromRGB(28, 26, 26), Enum.Material.Metal, decor, false)
+		local mouth = block("FurnaceMouth", Vector3.new(10, 7, 0.3), onWall(f, 0, 5, 0.35), ORANGE, Enum.Material.Neon, decor, false)
+		light(mouth, "PointLight", { Color = ORANGE, Range = 40, Brightness = 2.2, Shadows = false })
+		light(mouth, "ParticleEmitter", {
+			Texture = "rbxasset://textures/particles/fire_main.dds",
+			Rate = 12,
+			Lifetime = NumberRange.new(0.6, 1.0),
+			Speed = NumberRange.new(2, 5),
+			Size = NumberSequence.new(3, 0.5),
+			LightEmission = 1,
+			EmissionDirection = Enum.NormalId.Back, -- toward the arena (the panel faces the wall)
+			Color = ColorSequence.new(Color3.fromRGB(255, 210, 120), Color3.fromRGB(255, 80, 20)),
+		})
+		for _, x in { -9, 9 } do
+			block("WallRib", Vector3.new(1.5, map.wallHeight, 0.8), onWall(f, x, map.wallHeight / 2, 0.4), Color3.fromRGB(40, 37, 35), Enum.Material.Metal, decor, false)
+		end
+	end
+	for _, d in CORNERS do
+		local p = d.Unit * (half * 1.2)
+		local pot = block("Crucible", Vector3.new(7, 8, 8), CFrame.new(p.X, 38, p.Z) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(45, 42, 40), Enum.Material.Metal, decor, false)
+		pot.Shape = Enum.PartType.Cylinder
+		local melt = block("CrucibleMelt", Vector3.new(0.3, 7, 7), CFrame.new(p.X, 41.6, p.Z) * CFrame.Angles(0, 0, math.rad(90)), ORANGE, Enum.Material.Neon, decor, false)
+		melt.Shape = Enum.PartType.Cylinder
+		light(melt, "PointLight", { Color = ORANGE, Range = 22, Brightness = 1.5 })
+		for _, o in { Vector3.new(2.6, 0, 0), Vector3.new(-2.6, 0, 0) } do
+			block("Chain", Vector3.new(0.3, 24, 0.3), CFrame.new(p + o + Vector3.new(0, 54, 0)), Color3.fromRGB(60, 58, 56), Enum.Material.Metal, decor, false)
+		end
+	end
+end
+
+-- Inferno Caldera: lava veins down the crater walls, rim glow, falling ash, rising
+-- embers, and a fall of lava over the gate.
+local function decorInferno(map: any, decor: Folder)
+	local half = map.half
+	local LAVA = Color3.fromRGB(255, 90, 26)
+	for _, f in wallFaces(half) do
+		local spread = if f.straight then { -20, 0, 20 } else { -30, -10, 10, 30 }
+		for k, along in spread do
+			local tall = 10 + (k % 3) * 5
+			local vein = block("LavaVein", Vector3.new(0.8, tall, 0.3), onWall(f, along, tall / 2, 0.15) * CFrame.Angles(0, 0, math.rad((k % 2) * 12 - 6)), LAVA, Enum.Material.Neon, decor, false)
+			vein.Transparency = 0.1
+		end
+	end
+	for _, d in CORNERS do
+		local p = d.Unit * (half * 1.15)
+		local glow = block("RimGlow", Vector3.one, CFrame.new(p.X, 24, p.Z), LAVA, Enum.Material.Neon, decor, false)
+		glow.Transparency = 1
+		light(glow, "PointLight", { Color = Color3.fromRGB(255, 110, 40), Range = 60, Brightness = 1.6 })
+	end
+	local sky = block("AshSky", Vector3.new(half * 2, 1, half * 2), CFrame.new(0, 50, 0), LAVA, Enum.Material.SmoothPlastic, decor, false)
+	sky.Transparency = 1
+	light(sky, "ParticleEmitter", {
+		Rate = 60,
+		Lifetime = NumberRange.new(9, 12),
+		Speed = NumberRange.new(3, 6),
+		EmissionDirection = Enum.NormalId.Bottom,
+		Size = NumberSequence.new(0.35),
+		Color = ColorSequence.new(Color3.fromRGB(90, 86, 84)),
+		Transparency = NumberSequence.new(0.2, 0.8),
+		Rotation = NumberRange.new(0, 360),
+		RotSpeed = NumberRange.new(-90, 90),
+		SpreadAngle = Vector2.new(25, 25),
+	})
+	local lake = block("Embers", Vector3.new(half * 2 + 60, 1, half * 2 + 60), CFrame.new(0, 1, 0), LAVA, Enum.Material.SmoothPlastic, decor, false)
+	lake.Transparency = 1
+	light(lake, "ParticleEmitter", {
+		Texture = "rbxasset://textures/particles/sparkles_main.dds",
+		Rate = 30,
+		Lifetime = NumberRange.new(2, 4),
+		Speed = NumberRange.new(4, 9),
+		EmissionDirection = Enum.NormalId.Top,
+		Size = NumberSequence.new(0.4, 0),
+		LightEmission = 1,
+		Color = ColorSequence.new(Color3.fromRGB(255, 200, 90), Color3.fromRGB(255, 70, 20)),
+		Acceleration = Vector3.new(0, 2, 0),
+		SpreadAngle = Vector2.new(20, 20),
+	})
+	if map.gate then
+		local g = Vector3.new(map.gate.x, 0, map.gate.z)
+		local fall = block("LavaFall", Vector3.one, CFrame.new(g.Unit * (half - 1) + Vector3.new(0, 24, 0)), LAVA, Enum.Material.Neon, decor, false)
+		fall.Transparency = 1
+		light(fall, "ParticleEmitter", {
+			Texture = "rbxasset://textures/particles/fire_main.dds",
+			Rate = 50,
+			Lifetime = NumberRange.new(1, 1.4),
+			Speed = NumberRange.new(14, 20),
+			EmissionDirection = Enum.NormalId.Bottom,
+			Size = NumberSequence.new(4, 2),
+			LightEmission = 0.8,
+			SpreadAngle = Vector2.new(30, 4),
+			Color = ColorSequence.new(Color3.fromRGB(255, 160, 60), Color3.fromRGB(200, 50, 10)),
+		})
+	end
+end
+
+-- Grinder Pit: walls of crushed cars, hazard stripes along the saw runs, rusted floor
+-- plates and sodium floodlights on the corner walls.
+local function decorGrinder(map: any, decor: Folder)
+	local half = map.half
+	local YELLOW, BLACK = Color3.fromRGB(255, 210, 31), Color3.fromRGB(20, 20, 20)
+	local SODIUM = Color3.fromRGB(255, 200, 128)
+	local CARS = { Color3.fromRGB(150, 40, 35), Color3.fromRGB(40, 70, 130), Color3.fromRGB(200, 190, 175), Color3.fromRGB(60, 90, 55), Color3.fromRGB(90, 90, 95), Color3.fromRGB(170, 120, 40) }
+	local rng = Random.new(11)
+	for _, f in wallFaces(half) do
+		if nearGate(map, f.pos) then
+			continue
+		end
+		local width = if f.straight then 64 else 110
+		for row = 0, 1 do
+			local along = -width / 2
+			while along < width / 2 - 3 do
+				local w = rng:NextNumber(6, 9)
+				local h = rng:NextNumber(3.5, 4.8)
+				local tilt = CFrame.Angles(0, 0, math.rad(rng:NextNumber(-4, 4)))
+				block("CrushedCar", Vector3.new(w - 0.4, h, 0.6), onWall(f, along + w / 2, row * 5 + h / 2, 0.3) * tilt, CARS[rng:NextInteger(1, #CARS)], Enum.Material.CorrodedMetal, decor, false)
+				along += w
+			end
+		end
+	end
+	for _, run in map.saws do
+		local a, b = Vector3.new(run.x1, 0, run.z1), Vector3.new(run.x2, 0, run.z2)
+		local dir = (b - a).Unit
+		local side = Vector3.new(-dir.Z, 0, dir.X)
+		local len = (b - a).Magnitude
+		for _, s in { -2.2, 2.2 } do
+			local mid = (a + b) / 2 + side * s + Vector3.new(0, 0.03, 0)
+			block("HazardStrip", Vector3.new(0.8, 0.05, len), CFrame.lookAt(mid, mid + dir), YELLOW, Enum.Material.SmoothPlastic, decor, false)
+			for d = 2, len - 2, 4 do
+				local p = a + dir * d + side * s + Vector3.new(0, 0.04, 0)
+				block("HazardStripe", Vector3.new(0.82, 0.07, 1.6), CFrame.lookAt(p, p + dir + side), BLACK, Enum.Material.SmoothPlastic, decor, false)
+			end
+		end
+	end
+	for _ = 1, 18 do
+		local x, z = rng:NextNumber(-90, 90), rng:NextNumber(-90, 90)
+		block("FloorPlate", Vector3.new(rng:NextNumber(8, 16), 0.05, rng:NextNumber(8, 16)), CFrame.new(x, 0.025, z) * CFrame.Angles(0, rng:NextNumber(0, math.pi), 0), Color3.fromRGB(110, 72, 48), Enum.Material.CorrodedMetal, decor, false)
+	end
+	for _, d in CORNERS do
+		local p = d.Unit * (half * 1.05)
+		block("FloodPole", Vector3.new(1.2, 16, 1.2), CFrame.new(p.X, map.wallHeight + 8, p.Z), Color3.fromRGB(60, 62, 66), Enum.Material.Metal, decor, false)
+		local lamp = block("FloodLamp", Vector3.new(5, 3, 1), CFrame.lookAt(Vector3.new(p.X, map.wallHeight + 16, p.Z), Vector3.zero), SODIUM, Enum.Material.Neon, decor, false)
+		light(lamp, "SpotLight", { Color = SODIUM, Range = 60, Angle = 70, Brightness = 3, Face = Enum.NormalId.Front, Shadows = false })
+	end
+end
+
+local DECOR: { [string]: (map: any, decor: Folder) -> () } = { arena_forge = decorForge, arena_inferno = decorInferno, arena_grinder = decorGrinder }
+
+local function decorate(map: any, folder: Folder)
+	local fn = DECOR[map.name]
+	if fn then
+		local decor = Instance.new("Folder")
+		decor.Name = "Decor"
+		decor.Parent = folder
+		fn(map, decor)
+	end
 end
 
 -- Destroys a destructible piece: no longer blocks anything, server or client.
@@ -407,14 +658,16 @@ function Arena.load(name: string)
 	local half = map.half
 	local full = half * 2
 	local edge = half + t / 2
-	local wallColor = if map.kind == "arena" then Color3.fromRGB(70, 66, 62) else STONE
+	local wallTheme = THEME[name] and THEME[name].wall
+	local wallColor = if wallTheme then wallTheme[2] elseif map.kind == "arena" then Color3.fromRGB(70, 66, 62) else STONE
+	local wallMaterial = if wallTheme then wallTheme[1] else Enum.Material.Cobblestone
 	for _, side in { { 0, -edge, full + 2 * t, t }, { 0, edge, full + 2 * t, t }, { -edge, 0, t, full }, { edge, 0, t, full } } do
-		block("BoundaryWall", Vector3.new(side[3], h, side[4]), CFrame.new(side[1], h / 2, side[2]), wallColor, Enum.Material.Cobblestone, folder)
+		block("BoundaryWall", Vector3.new(side[3], h, side[4]), CFrame.new(side[1], h / 2, side[2]), wallColor, wallMaterial, folder)
 	end
 	if map.kind == "overworld" then
 		for i = -half, half, 38 do
 			for _, p in { { i, -edge }, { i, edge }, { -edge, i }, { edge, i } } do
-				block("WallPost", Vector3.new(t + 1.5, h + 2, t + 1.5), CFrame.new(p[1], (h + 2) / 2, p[2]), DARK_STONE, Enum.Material.Cobblestone, folder)
+				block("WallPost", Vector3.new(t + 1.5, h + 2, t + 1.5), CFrame.new(p[1], (h + 2) / 2, p[2]), if wallTheme then wallColor:Lerp(Color3.new(0, 0, 0), 0.25) else DARK_STONE, wallMaterial, folder)
 			end
 		end
 	end
@@ -443,6 +696,8 @@ function Arena.load(name: string)
 		local door = block("BossGate", size, CFrame.new(pos), Color3.fromRGB(255, 110, 40), Enum.Material.Neon, folder, false)
 		door.Transparency = 0.25
 	end
+
+	decorate(map, folder)
 
 	-- Grassland: bushes and flower clusters in the tall-grass patches (cosmetic).
 	if name == "grassland" then

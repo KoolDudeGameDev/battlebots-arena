@@ -49,6 +49,11 @@ Config.Camera = {
 	Back = 35,
 	Fov = 45,
 	Lerp = 0.25, -- per frame at 60 fps
+	-- Top-down zoom (D82): the camera pulls back as your main weapon's reach grows, so
+	-- you can see what you can hit. Height and Back above are the closest it gets (any
+	-- reach up to ZoomBaseRange); it never goes past ZoomMax times them.
+	ZoomBaseRange = 50,
+	ZoomMax = 2.2,
 	-- Third-person look up and down (D78): camera elevation above the robot, radians.
 	PitchDefault = 0.46,
 	PitchMin = 0.08, -- nearly level: look out across the arena
@@ -246,31 +251,37 @@ Config.Skills = {
 }
 
 Config.MountSockets = { "MountLeft", "MountRight", "MountBack" }
+-- Mounted guns only fire at targets within this arc in front of the hull (D82): the
+-- same 180 degrees their swivels can turn (Presentation.swivelDegrees either side).
+Config.MountArcDegrees = 180
 Config.MountRankScale = 0.15 -- weapons grow 15% per rank (D36)
 
--- Coins (Phase 4a, D38, D73): rare. Map coins top up to mapMax, one every
+-- Coins (Phase 4a, D38, D73; more since D82). Map coins top up to mapMax, one every
 -- mapEvery[1]-[2] s. One chest at a time (shoot it open) drops pieces[1]-[2]
 -- coins worth `value` each, then the next appears respawn[1]-[2] s later.
 Config.Coins = {
 	code = 9, -- pickup kind code (after the pods)
 	value = 5,
-	mapMax = 3,
-	mapEvery = { 60, 90 },
+	mapMax = 6,
+	mapEvery = { 20, 35 },
 	zones = { "outer", "middle", "centre" },
-	chest = { hp = 200, size = 5, radius = 3.2, pieces = { 3, 7 }, respawn = { 240, 360 }, zones = { "middle", "centre" } },
+	chest = { hp = 200, size = 5, radius = 3.2, pieces = { 5, 10 }, respawn = { 120, 180 }, zones = { "middle", "centre" } },
 }
 
 -- Bosses (Phase 4b, D39, D74). One at a time, every every[1]-[2] s while at least
 -- minPlayers are in, after a `warning`. Everyone who hit it gets the same reward;
 -- more scatters on the ground. Its hazard then runs for hazardDuration s.
+-- HP and damage grow with the players' levels (D82): HazardTiming.bossHp, bossDamageMult.
 Config.Bosses = {
 	minPlayers = 2,
 	every = { 420, 600 },
 	warning = 20,
 	despawnAfter = 240,
-	hpBase = 1500,
-	hpPerPlayer = 400,
-	reward = { coins = 60, xp = 600, scatterCoins = 8, scatterOrbs = 10, scatterOrbValue = 30 },
+	hpBase = 4000,
+	hpPerPlayer = 1500,
+	hpPerLevel = 250,
+	damagePerLevel = 0.01, -- +1% boss damage per average player level
+	reward = { coins = 100, xp = 600, scatterCoins = 12, scatterOrbs = 10, scatterOrbValue = 30 },
 	hazardDuration = 360,
 	chaseRange = 160, -- it hunts the nearest robot within this; otherwise walks to the centre
 	list = {
@@ -282,7 +293,7 @@ Config.Bosses = {
 			speed = 9,
 			hazard = "vents",
 			-- A long cone of fire for 1 s that sets robots burning.
-			attack = { kind = "flame", every = 2.5, duration = 1, range = 34, coneDegrees = 70, damage = 24, burnDps = 8, burnDuration = 3 },
+			attack = { kind = "flame", every = 2.2, duration = 1, range = 34, coneDegrees = 70, damage = 36, burnDps = 12, burnDuration = 3 }, -- D82: harder
 		},
 		forge = {
 			name = "Forge Titan",
@@ -293,7 +304,7 @@ Config.Bosses = {
 			speed = 8,
 			hazard = "hammers",
 			-- A red warning circle, then the hammer lands on it.
-			attack = { kind = "smash", every = 3, windup = 0.8, reach = 6, radius = 16, damage = 45, knockback = 20 }, -- radius 12 -> 16 (D80)
+			attack = { kind = "smash", every = 2.5, windup = 0.8, reach = 6, radius = 16, damage = 60, knockback = 20 }, -- radius 12 -> 16 (D80); harder (D82)
 		},
 		grinder = {
 			name = "Grinder",
@@ -304,7 +315,7 @@ Config.Bosses = {
 			speed = 10,
 			hazard = "saws",
 			-- Charges at a robot with its saws spinning, hurting everything it hits.
-			attack = { kind = "charge", every = 5, duration = 1.2, speedMult = 3.5, damage = 30, knockback = 18 },
+			attack = { kind = "charge", every = 4, duration = 1.2, speedMult = 3.5, damage = 45, knockback = 18 }, -- D82: harder
 		},
 	},
 }
@@ -339,12 +350,15 @@ Config.Maps = {
 	-- Lighting per map (bible section 10). Grassland keeps its current values.
 	lighting = {
 		grassland = { clock = 14.5, brightness = 2.4, ambient = rgb(135, 140, 150), atmosphere = { density = 0.3, offset = 0.2, color = rgb(205, 200, 185), decay = rgb(110, 130, 160), glare = 0.15, haze = 1.4 }, cc = { brightness = 0.02, contrast = 0.06, saturation = 0.12, tint = hex(0xFFFFFF) }, bloom = { intensity = 0.5, size = 24, threshold = 1.6 }, sunRays = 0.06 },
-		forge_highlands = { clock = 16.5, brightness = 2.2, ambient = hex(0x8C8278), atmosphere = { density = 0.38, offset = 0.1, color = hex(0xC8B8A0), decay = hex(0x7A6A58), glare = 0.2, haze = 1.8 }, cc = { brightness = 0, contrast = 0.10, saturation = 0.05, tint = hex(0xFFF0DC) }, bloom = { intensity = 0.6, size = 24, threshold = 1.3 }, sunRays = 0.10 },
-		inferno_fields = { clock = 18.5, brightness = 1.6, ambient = hex(0x6A3C2C), atmosphere = { density = 0.42, offset = 0.15, color = hex(0x8C4A2A), decay = hex(0x3C1408), glare = 0.3, haze = 2.0 }, cc = { brightness = 0, contrast = 0.12, saturation = 0.15, tint = hex(0xFFE0CC) }, bloom = { intensity = 0.8, size = 28, threshold = 1.1 }, sunRays = 0 },
-		grinder_scrapyard = { clock = 19.5, brightness = 1.5, ambient = hex(0x5A5C60), atmosphere = { density = 0.40, offset = 0.1, color = hex(0x8A8070), decay = hex(0x3A3A40), glare = 0, haze = 1.6 }, cc = { brightness = 0.02, contrast = 0.12, saturation = -0.08, tint = hex(0xFFFFFF) }, bloom = { intensity = 0.6, size = 24, threshold = 1.2 }, sunRays = 0 },
-		arena_forge = { clock = 0, brightness = 1.0, ambient = hex(0x5A4234), atmosphere = { density = 0.40, offset = 0, color = hex(0x6A3A20), decay = hex(0x2A1408), glare = 0, haze = 2.0 }, cc = { brightness = 0, contrast = 0.12, saturation = 0.05, tint = hex(0xFFE2C8) }, bloom = { intensity = 0.8, size = 28, threshold = 1.2 }, sunRays = 0 },
-		arena_inferno = { clock = 18.8, brightness = 1.4, ambient = hex(0x5A2A1E), atmosphere = { density = 0.45, offset = 0.1, color = hex(0x7A3018), decay = hex(0x2A0E08), glare = 0.3, haze = 2.4 }, cc = { brightness = 0, contrast = 0.12, saturation = 0.20, tint = hex(0xFFD8C0) }, bloom = { intensity = 0.9, size = 28, threshold = 1.1 }, sunRays = 0 },
-		arena_grinder = { clock = 21, brightness = 1.2, ambient = hex(0x5E6268), atmosphere = { density = 0.35, offset = 0, color = hex(0x606A70), decay = hex(0x30343A), glare = 0, haze = 1.4 }, cc = { brightness = 0, contrast = 0.15, saturation = -0.10, tint = hex(0xFFFFFF) }, bloom = { intensity = 0.6, size = 24, threshold = 1.3 }, sunRays = 0 },
+		-- D82: brighter than the bible's first values. Gregory's Studio test found the Forge
+		-- Foundry (midnight) and the dusk maps too dark to read; each map keeps its own
+		-- colour of light, but every one is now afternoon-bright.
+		forge_highlands = { clock = 16.2, brightness = 2.5, ambient = hex(0x9A9084), atmosphere = { density = 0.3, offset = 0.1, color = hex(0xC8B8A0), decay = hex(0x7A6A58), glare = 0.2, haze = 1.4 }, cc = { brightness = 0.02, contrast = 0.08, saturation = 0.05, tint = hex(0xFFF0DC) }, bloom = { intensity = 0.6, size = 24, threshold = 1.3 }, sunRays = 0.10 },
+		inferno_fields = { clock = 17.0, brightness = 2.5, ambient = hex(0xA87A66), atmosphere = { density = 0.3, offset = 0.1, color = hex(0xB0704A), decay = hex(0x6A2A14), glare = 0.2, haze = 1.2 }, cc = { brightness = 0.05, contrast = 0.08, saturation = 0.15, tint = hex(0xFFE6D2) }, bloom = { intensity = 0.7, size = 26, threshold = 1.2 }, sunRays = 0.05 },
+		grinder_scrapyard = { clock = 17.6, brightness = 2.2, ambient = hex(0x8E9094), atmosphere = { density = 0.3, offset = 0.1, color = hex(0x9A9080), decay = hex(0x4A4A50), glare = 0, haze = 1.2 }, cc = { brightness = 0.03, contrast = 0.1, saturation = -0.05, tint = hex(0xFFF4E6) }, bloom = { intensity = 0.6, size = 24, threshold = 1.2 }, sunRays = 0.04 },
+		arena_forge = { clock = 15, brightness = 1.8, ambient = hex(0xA88060), atmosphere = { density = 0.32, offset = 0, color = hex(0x9A5A30), decay = hex(0x4A2410), glare = 0, haze = 1.2 }, cc = { brightness = 0.04, contrast = 0.1, saturation = 0.1, tint = hex(0xFFE2C4) }, bloom = { intensity = 0.8, size = 28, threshold = 1.1 }, sunRays = 0 },
+		arena_inferno = { clock = 17.4, brightness = 2.1, ambient = hex(0xA0604A), atmosphere = { density = 0.34, offset = 0.05, color = hex(0xA04820), decay = hex(0x501808), glare = 0.3, haze = 1.4 }, cc = { brightness = 0.04, contrast = 0.1, saturation = 0.2, tint = hex(0xFFD8C0) }, bloom = { intensity = 0.9, size = 28, threshold = 1.1 }, sunRays = 0 },
+		arena_grinder = { clock = 17.8, brightness = 1.9, ambient = hex(0x94969C), atmosphere = { density = 0.3, offset = 0, color = hex(0x8A8A80), decay = hex(0x404448), glare = 0, haze = 1.0 }, cc = { brightness = 0.03, contrast = 0.12, saturation = -0.05, tint = hex(0xFFF2DC) }, bloom = { intensity = 0.6, size = 24, threshold = 1.2 }, sunRays = 0 },
 	},
 }
 
@@ -354,7 +368,8 @@ Config.Maps = {
 Config.Hazards = {
 	vents = {
 		name = "Flame Vents",
-		cycle = { { name = "idle", seconds = 3 }, { name = "glow", seconds = 1 }, { name = "flame", seconds = 2 } },
+		-- glow = the red warning on the ground before the fire (1.5 s since D82)
+		cycle = { { name = "idle", seconds = 2.5 }, { name = "glow", seconds = 1.5 }, { name = "flame", seconds = 2 } },
 		radius = 4,
 		dps = 20,
 		ring = 100, -- 8 vents on this ring, between the walls

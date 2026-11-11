@@ -1,7 +1,7 @@
 -- Bosses, the map flow and hazards (Phase 4b D39/D74, maps D79/D81).
 -- Every 7-10 min of grassland time with at least 2 players, a 20 s warning, then
 -- everyone is moved to the boss's own arena (a fade and a map swap). There it hunts
--- the nearest robot; PvP is off. Everyone who damaged it gets the same 60 coins
+-- the nearest robot; PvP is off. Everyone who damaged it gets the same 100 coins
 -- and 600 XP when it falls, more scatters on the ground, and 6 s later the
 -- overworld comes back as the boss's biome with its hazard built in, for 6 min.
 -- If nobody beats it in 4 min it leaves and everyone goes home. The phase logic
@@ -19,6 +19,7 @@ local Combat2D = require(Shared.Combat2D)
 local HazardTiming = require(Shared.HazardTiming)
 local MapFlow = require(Shared.MapFlow)
 local MapQuery = require(Shared.MapQuery)
+local MapLayouts = require(Shared.MapLayouts)
 local World = require(script.Parent.World)
 local Arena = require(script.Parent.Arena)
 local Pickups = require(script.Parent.Pickups)
@@ -52,6 +53,7 @@ type Active = {
 	busyUntil: number, -- mid-attack: it stops walking
 	chargeDir: Vector3?,
 	chargeHit: { [number]: boolean },
+	dmg: number, -- damage multiplier from the players' levels (D82)
 }
 local active: Active? = nil
 local flow: MapFlow.State = MapFlow.new(Config, 0, 0.5) -- replaced in init
@@ -94,7 +96,7 @@ local function hitArea(a: Active, cx: number, cz: number, radius: number, damage
 		local ex, ez = World.position(e)
 		local r = World.hitRadius(e, Config)
 		if (ex - cx) ^ 2 + (ez - cz) ^ 2 <= (radius + r) ^ 2 then
-			Combat.damage(e, damage, a.e, true, ex, ez)
+			Combat.damage(e, damage * a.dmg, a.e, true, ex, ez)
 			Combat.knock(e, cx, cz, knockback)
 		end
 	end
@@ -119,9 +121,9 @@ local function flameAttack(a: Active, atk)
 			for _, v in aliveRobots() do
 				local vx, vz = World.position(v)
 				if Combat2D.inArc(x, z, e.aim, half, reach, vx, vz, World.hitRadius(v, Config)) then
-					Combat.damage(v, atk.damage / ticks, e, true, vx, vz)
+					Combat.damage(v, atk.damage * a.dmg / ticks, e, true, vx, vz)
 					v.burnUntil = now() + atk.burnDuration
-					v.burnDps = atk.burnDps
+					v.burnDps = atk.burnDps * a.dmg
 					v.burnSourceId = e.id
 				end
 			end
@@ -198,7 +200,14 @@ local function spawnArenaBoss(key: string)
 		local d = math.sqrt(gate.x ^ 2 + gate.z ^ 2)
 		x, z = gate.x * (1 - 18 / d), gate.z * (1 - 18 / d) -- just inside the doorway
 	end
-	local hp = HazardTiming.bossHp(B, #Players:GetPlayers())
+	-- HP and damage scale with the levels of the players in the fight (D82).
+	local levels = {}
+	for _, p in World.entities do
+		if p.player then
+			table.insert(levels, p.level)
+		end
+	end
+	local hp = HazardTiming.bossHp(B, levels)
 	local e = Match.spawnBoss(def, x, z, hp)
 	active = {
 		e = e,
@@ -209,6 +218,7 @@ local function spawnArenaBoss(key: string)
 		busyUntil = 0,
 		chargeDir = nil,
 		chargeHit = {},
+		dmg = HazardTiming.bossDamageMult(B, levels),
 	}
 	announce(`{def.name} is here! Everyone who hits it shares the reward.`)
 end
@@ -329,7 +339,7 @@ local function tickBoss(dt: number)
 				local vx, vz = World.position(v)
 				if (vx - nx) ^ 2 + (vz - nz) ^ 2 <= (reach + World.hitRadius(v, Config)) ^ 2 then
 					a.chargeHit[v.id] = true
-					Combat.damage(v, atk.damage, e, false, vx, vz)
+					Combat.damage(v, atk.damage * a.dmg, e, false, vx, vz)
 					Combat.knock(v, nx, nz, atk.knockback)
 				end
 			end
@@ -376,7 +386,7 @@ end
 
 -- Hazards ----------------------------------------------------------------------
 
-type Spot = { x: number, z: number, offset: number, parts: { [string]: BasePart }, last: string, hitAt: { [number]: number }, track: { number }? }
+type Spot = { x: number, z: number, offset: number, parts: { [string]: BasePart }, last: string, hitAt: { [number]: number }, track: { number }?, warnT: number? }
 local hazard: { kind: string, startedAt: number, spots: { Spot }, folder: Folder }? = nil
 
 local function part(folder: Instance, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material, shape: Enum.PartType?): Part
@@ -422,6 +432,21 @@ function Bosses.startHazard(kind: string)
 			s.parts.grate = part(folder, "Vent", Vector3.new(0.4, def.radius * 2, def.radius * 2), CFrame.new(s.x, 0.2, s.z) * UPRIGHT, Color3.fromRGB(50, 50, 55), Enum.Material.DiamondPlate, Enum.PartType.Cylinder)
 			s.parts.fire = part(folder, "VentFire", Vector3.new(10, def.radius * 1.6, def.radius * 1.6), CFrame.new(s.x, 5, s.z) * UPRIGHT, Color3.fromRGB(255, 120, 30), Enum.Material.Neon, Enum.PartType.Cylinder)
 			s.parts.fire.Transparency = 1
+			-- D82: a red warning disc on the ground (the full hurt radius) before the fire.
+			s.parts.warn = part(folder, "VentWarning", Vector3.new(0.15, def.radius * 2 + 1, def.radius * 2 + 1), CFrame.new(s.x, 0.45, s.z) * UPRIGHT, Color3.fromRGB(255, 40, 30), Enum.Material.Neon, Enum.PartType.Cylinder)
+			s.parts.warn.Transparency = 1
+			local flames = Instance.new("ParticleEmitter")
+			flames.Texture = "rbxasset://textures/particles/fire_main.dds"
+			flames.EmissionDirection = Enum.NormalId.Right -- up, on a standing cylinder
+			flames.Rate = 70
+			flames.Lifetime = NumberRange.new(0.5, 0.8)
+			flames.Speed = NumberRange.new(14, 22)
+			flames.SpreadAngle = Vector2.new(12, 12)
+			flames.Size = NumberSequence.new(3, 1)
+			flames.LightEmission = 1
+			flames.Color = ColorSequence.new(Color3.fromRGB(255, 220, 120), Color3.fromRGB(255, 70, 20))
+			flames.Enabled = false
+			flames.Parent = s.parts.grate
 			table.insert(spots, s)
 		end
 	elseif kind == "hammers" then
@@ -482,12 +507,25 @@ local function tickHazard()
 	local elapsed = t - hz.startedAt
 	for _, s in hz.spots do
 		if hz.kind == "vents" then
-			local name = HazardTiming.phase(def.cycle, elapsed + s.offset)
+			local name, progress = HazardTiming.phase(def.cycle, elapsed + s.offset)
 			if name ~= s.last then
 				s.last = name
 				s.parts.grate.Color = if name == "idle" then Color3.fromRGB(50, 50, 55) else Color3.fromRGB(255, 110, 30)
 				s.parts.grate.Material = if name == "idle" then Enum.Material.DiamondPlate else Enum.Material.Neon
 				s.parts.fire.Transparency = if name == "flame" then 0.25 else 1
+				local flames = s.parts.grate:FindFirstChildOfClass("ParticleEmitter")
+				if flames then
+					flames.Enabled = name == "flame"
+				end
+			end
+			-- The warning blinks faster as the fire gets close, then stays faint while it burns.
+			local warnT = if name == "glow" then 0.2 + 0.4 * (0.5 + 0.5 * math.cos(progress * math.pi * (3 + 6 * progress)))
+				elseif name == "flame" then 0.6
+				else 1
+			warnT = math.floor(warnT * 5 + 0.5) / 5 -- a few steps, so it replicates rarely
+			if warnT ~= s.warnT then
+				s.warnT = warnT
+				s.parts.warn.Transparency = warnT
 			end
 			if name == "flame" then
 				for _, e in robotsNear(s.x, s.z, def.radius) do
@@ -549,11 +587,12 @@ function Bosses.publish()
 	Workspace:SetAttribute("MapBoss", if flow.boss then B.list[flow.boss].name else "")
 end
 
--- Fade everyone out, swap the map under them, place them on it, fade back in.
-local function swapTo(name: string, after: (() -> ())?)
+-- Close everyone's blast doors (D82) with the new map's name and a line under it,
+-- swap the map under them, place them on it, open the doors.
+local function swapTo(name: string, after: (() -> ())?, subtitle: string?)
 	swapping = true
 	local c = Config.Maps.fadeColor[name]
-	Remotes.MapSwap:FireAllClients(Color3.fromRGB(c[1], c[2], c[3]))
+	Remotes.MapSwap:FireAllClients(Color3.fromRGB(c[1], c[2], c[3]), MapLayouts[name].displayName, subtitle or "")
 	task.delay(Config.Maps.fade, function()
 		Bosses.stopHazard()
 		Combat.clearAll()
@@ -577,25 +616,25 @@ local function onEvent(ev: string)
 		swapTo(flow.map, function()
 			spawnArenaBoss(boss)
 			Bosses.startMapHazard()
-		end)
+		end, if def then `The {def.name}'s lair` else nil)
 	elseif ev == "escape" then
 		local a = active
 		if a then
 			announce(`{a.def.name} got bored and left. No reward this time.`)
 			removeBoss(a)
 		end
-		swapTo("grassland")
+		swapTo("grassland", nil, "Back to the overworld")
 	elseif ev == "biome" then
 		swapTo(flow.map, function()
 			local name = Bosses.startMapHazard()
 			announce(`{Arena.map().displayName}! {name or "Hazards"} for {math.floor(B.hazardDuration / 60)} minutes. Watch your step!`)
-		end)
+		end, `Changed for {math.floor(B.hazardDuration / 60)} minutes`)
 	elseif ev == "revert" then
 		announce(`{Arena.map().displayName} fades in {Config.Maps.revertWarning} seconds.`)
 	elseif ev == "grassland" then
 		swapTo("grassland", function()
 			announce("The arena is calm again.")
-		end)
+		end, "Back to the overworld")
 	end
 	Bosses.publish()
 end

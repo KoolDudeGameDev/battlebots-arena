@@ -226,8 +226,8 @@ end
 
 -- Bodies (D78) ----------------------------------------------------------------------
 -- Each returns where the rest of the robot attaches: the turret height, the flat
--- "deck" that level bands and upgrade parts sit on, the front and back edges, the
--- mount sockets, and where the skill core sits on the turret.
+-- "deck" that level bands and upgrade parts sit on, the front and back edges and the
+-- mount sockets.
 
 type Body = {
 	turretY: number,
@@ -235,7 +235,6 @@ type Body = {
 	front: number,
 	back: number,
 	sockets: { [string]: Vector3 },
-	core: Vector3,
 }
 
 -- Rookie: the baseline. A compact buggy with a sloped nose, exposed wheels under
@@ -267,7 +266,6 @@ local function rookieBody(ctx: Ctx, paint: Color3, speedTier: number): Body
 		front = -2.8,
 		back = 2.1,
 		sockets = { MountLeft = Vector3.new(-1.95, 0.5, 0.6), MountRight = Vector3.new(1.95, 0.5, 0.6), MountBack = Vector3.new(0, 0.9, 1.75) },
-		core = Vector3.new(0, 1.0, 0.7),
 	}
 end
 
@@ -304,7 +302,6 @@ local function bombardBody(ctx: Ctx, paint: Color3): Body
 		front = -3.3,
 		back = 2.4,
 		sockets = { MountLeft = Vector3.new(-1.75, 0.15, -1.55), MountRight = Vector3.new(1.75, 0.15, -1.55), MountBack = Vector3.new(0, 0.95, 2.1) },
-		core = Vector3.new(0, 0.45, 1.25),
 	}
 end
 
@@ -341,7 +338,6 @@ local function scorcherBody(ctx: Ctx, paint: Color3, speedTier: number): Body
 		front = -2.2,
 		back = 2.4,
 		sockets = { MountLeft = Vector3.new(-1.75, 0.35, -0.6), MountRight = Vector3.new(1.75, 0.35, -0.6), MountBack = Vector3.new(0, 1.35, 0.85) },
-		core = Vector3.new(0, 0.5, 0.6),
 	}
 end
 
@@ -380,7 +376,6 @@ local function brawlerBody(ctx: Ctx, paint: Color3): Body
 		front = -3.1,
 		back = 2.3,
 		sockets = { MountLeft = Vector3.new(-1.9, -0.35, 0.9), MountRight = Vector3.new(1.9, -0.35, 0.9), MountBack = Vector3.new(0, -0.3, 1.9) },
-		core = Vector3.new(0, 0.35, 0.6),
 	}
 end
 
@@ -416,7 +411,6 @@ local function bomberBody(ctx: Ctx, paint: Color3): Body
 		front = -2.1,
 		back = 2.0,
 		sockets = { MountLeft = Vector3.new(-1.55, 1.35, -0.4), MountRight = Vector3.new(1.55, 1.35, -0.4), MountBack = Vector3.new(0, 1.2, 1.7) },
-		core = Vector3.new(0, 0.3, 0.75),
 	}
 end
 
@@ -443,7 +437,6 @@ local function bomberSmallBody(ctx: Ctx, paint: Color3): Body
 		front = -1.6,
 		back = 1.5,
 		sockets = { MountLeft = Vector3.new(-1.2, 0.5, 0.1), MountRight = Vector3.new(1.2, 0.5, 0.1), MountBack = Vector3.new(0, 0.7, 1.0) },
-		core = Vector3.new(0, 0.3, 0.6),
 	}
 end
 
@@ -502,6 +495,16 @@ local function buildMount(ctx: Ctx, turret: BasePart, socketAt: Vector3, weaponI
 	local function part(name: string, size: Vector3, local_: Vector3, color: Color3, material: Enum.Material, rotation: CFrame?, shape: Enum.PartType?): Part
 		return attach(ctx, base(), name, size * k, CFrame.new(local_ * k + Vector3.new(0, 0.35 * k, 0)) * (rotation or CFrame.identity), color, material, shape)
 	end
+	-- Where this mount's shots leave from (D82): clients start its bullets, rockets and
+	-- bolts here and turn the swivel toward each shot.
+	local function muzzle(local_: Vector3)
+		local sw = base()
+		sw:SetAttribute("Mount", weaponId)
+		local a = Instance.new("Attachment")
+		a.Name = "Muzzle"
+		a.Position = (local_ * k + Vector3.new(0, 0.35 * k, 0)) * ctx.s
+		a.Parent = sw
+	end
 
 	if weaponId == "wpn_gatling" then
 		part("Gatling", Vector3.new(0.9, 0.8, 1.4), Vector3.zero, DARK, M.Metal)
@@ -511,6 +514,7 @@ local function buildMount(ctx: Ctx, turret: BasePart, socketAt: Vector3, weaponI
 			part("GatlingBarrel", Vector3.new(1.4, 0.18, 0.18), Vector3.new(x, 0.1, -1.3), STEEL, M.Metal, AXIS_Z, SHAPE.Cylinder)
 		end
 		part("BarrelClamp", Vector3.new(0.2, 0.55, 0.55), Vector3.new(0, 0.1, -1.6), DARK, M.Metal, AXIS_Z, SHAPE.Cylinder)
+		muzzle(Vector3.new(0, 0.1, -2.05))
 	elseif weaponId == "wpn_rocket" then
 		part("RocketPod", Vector3.new(1.2, 0.9, 1.2), Vector3.zero, Color3.fromRGB(110, 120, 90), M.Metal)
 		local tubes = Stats.rocketCount(rank) + 1
@@ -518,6 +522,7 @@ local function buildMount(ctx: Ctx, turret: BasePart, socketAt: Vector3, weaponI
 			local x = (i - (tubes + 1) / 2) * 0.32
 			part("RocketTube", Vector3.new(0.6, 0.28, 0.28), Vector3.new(x, 0.15, -0.65), Color3.fromRGB(165, 46, 36), M.Metal, AXIS_Z, SHAPE.Cylinder)
 		end
+		muzzle(Vector3.new(0, 0.15, -1.0))
 	elseif weaponId == "wpn_railgun" then
 		for _, x in { -0.22, 0.22 } do
 			part("Rail", Vector3.new(0.15, 0.25, 3.2), Vector3.new(x, 0.1, -0.8), DARK, M.Metal)
@@ -525,12 +530,14 @@ local function buildMount(ctx: Ctx, turret: BasePart, socketAt: Vector3, weaponI
 		for i = 1, rank do
 			part("RailCoil", Vector3.new(0.25, 0.7, 0.7), Vector3.new(0, 0.1, 0.4 - i * 0.45), Color3.fromRGB(80, 220, 255), M.Neon, AXIS_Z, SHAPE.Cylinder)
 		end
+		muzzle(Vector3.new(0, 0.1, -2.4))
 	elseif weaponId == "wpn_shock" then
 		part("ShockBase", Vector3.new(1.1, 0.4, 1.1), Vector3.zero, DARK, M.Metal)
 		for i = 1, rank do
 			part("ShockRing", Vector3.new(0.12, 0.9, 0.9), Vector3.new(0, 0.25 + i * 0.22, 0), Color3.fromRGB(120, 200, 255), M.Neon, AXIS_Y, SHAPE.Cylinder)
 		end
 		part("ShockOrb", Vector3.new(0.6, 0.6, 0.6), Vector3.new(0, 0.5 + rank * 0.22, 0), Color3.fromRGB(200, 240, 255), M.Neon, nil, SHAPE.Ball)
+		muzzle(Vector3.new(0, 0.5 + rank * 0.22, 0))
 	elseif weaponId == "wpn_spikeram" then
 		-- Minotaur Horns: always on the front, whatever socket they took. Two big
 		-- horns sweep out and up; a bull plate sits between them.
@@ -849,17 +856,6 @@ local function buildBody(model: Model, root: BasePart, build, color: Color3, sca
 		for _, x in { -1.0, 1.0 } do
 			attach(ctx, turret, "HeatVent", Vector3.new(0.2, 0.5, 1.2), CFrame.new(x, 0.6, 0.4), Color3.fromRGB(255, 120, 40), M.Neon)
 		end
-	end
-	if build.skill then
-		local coreColor = ({
-			skl_dash = Color3.fromRGB(80, 230, 255),
-			skl_shield = Color3.fromRGB(240, 240, 255),
-			skl_nullfield = Color3.fromRGB(170, 110, 255),
-			skl_flipper = Color3.fromRGB(255, 200, 60),
-			skl_earthwall = Color3.fromRGB(170, 120, 70),
-			skl_bomb = Color3.fromRGB(255, 80, 40),
-		})[build.skill] or Color3.new(1, 1, 1)
-		attach(ctx, turret, "SkillCore", Vector3.new(0.7, 0.7, 0.7), CFrame.new(body.core), coreColor, M.Neon, SHAPE.Ball)
 	end
 	if build.skill == "skl_flipper" then
 		-- Flipper plate on the front, hinged at its back edge; clients kick it up on each flip (Flips).

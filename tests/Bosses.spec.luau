@@ -8,11 +8,12 @@ local function near(a: number, b: number): boolean
 end
 
 return function(test)
-	test("flame vents: 3 s idle, 1 s glow, 2 s flame, then repeat", function()
+	test("flame vents: 2.5 s idle, 1.5 s red warning (D82), 2 s flame, then repeat", function()
 		local cycle = Config.Hazards.vents.cycle
 		assert(HazardTiming.phase(cycle, 0) == "idle")
-		assert(HazardTiming.phase(cycle, 2.99) == "idle")
-		assert(HazardTiming.phase(cycle, 3.5) == "glow")
+		assert(HazardTiming.phase(cycle, 2.49) == "idle")
+		assert(HazardTiming.phase(cycle, 2.6) == "glow")
+		assert(HazardTiming.phase(cycle, 3.9) == "glow", "the warning lasts 1.5 s")
 		assert(HazardTiming.phase(cycle, 4.5) == "flame")
 		assert(HazardTiming.phase(cycle, 6.1) == "idle", "wraps after 6 s")
 		local _, progress = HazardTiming.phase(cycle, 5)
@@ -35,17 +36,24 @@ return function(test)
 		assert(near(HazardTiming.pingPong(100, 20, 10), 0))
 	end)
 
-	test("boss HP: 1500 + 400 per player", function()
-		assert(HazardTiming.bossHp(Config.Bosses, 2) == 2300)
-		assert(HazardTiming.bossHp(Config.Bosses, 20) == 9500)
+	test("boss HP (D82): 4000, plus 1500 and 250 per level for each player", function()
+		assert(HazardTiming.bossHp(Config.Bosses, { 20 }) == 10500, "a Lv 20 can't burst it down alone")
+		assert(HazardTiming.bossHp(Config.Bosses, { 20, 0 }) == 12000)
+		assert(HazardTiming.bossHp(Config.Bosses, {}) == 4000)
+	end)
+
+	test("boss damage (D82): +1% per average player level", function()
+		assert(near(HazardTiming.bossDamageMult(Config.Bosses, { 20 }), 1.2))
+		assert(near(HazardTiming.bossDamageMult(Config.Bosses, { 100, 0 }), 1.5))
+		assert(near(HazardTiming.bossDamageMult(Config.Bosses, {}), 1))
 	end)
 
 	test("boss rules from the roadmap", function()
 		local B = Config.Bosses
 		assert(B.minPlayers == 2 and B.every[1] == 420 and B.every[2] == 600)
 		assert(B.warning == 20 and B.despawnAfter == 240 and B.hazardDuration == 360)
-		assert(B.reward.coins == 60 and B.reward.xp == 600)
-		assert(B.reward.scatterCoins * Config.Coins.value == 40, "40 coins scatter")
+		assert(B.reward.coins == 100 and B.reward.xp == 600, "D82: 100 coins")
+		assert(B.reward.scatterCoins * Config.Coins.value == 60, "60 coins scatter (D82)")
 	end)
 
 	test("three bosses, each with a body, an attack and a hazard", function()

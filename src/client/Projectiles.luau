@@ -29,15 +29,20 @@ local NET_CODE = NET.code
 local LOOKS = {
 	[1] = { size = Vector3.new(0.5, 0.5, 1.8), color = Color3.fromRGB(255, 235, 120), trail = 0.08, sound = "Blaster" }, -- blaster
 	[2] = { size = Vector3.new(0.35, 0.35, 1.2), color = Color3.fromRGB(230, 230, 255), trail = 0.06, sound = "Gatling" }, -- gatling
-	[3] = { size = Vector3.new(0.75, 0.75, 2.4), color = Color3.fromRGB(235, 232, 220), rocket = true, sound = "RocketLaunch" }, -- Rocket Pod (D78)
+	[3] = { size = Vector3.new(0.45, 0.45, 1.5), color = Color3.fromRGB(235, 232, 220), rocket = true, corkscrew = true, sound = "RocketLaunch" }, -- Rocket Pod mini-rockets (D78, D82)
 	[4] = { size = Vector3.new(0.55, 0.55, 2.0), color = Color3.fromRGB(255, 150, 40), trail = 0.1, sound = "Blaster" }, -- ricochet
 	[5] = { size = Vector3.new(0.3, 0.3, 4.5), color = Color3.fromRGB(90, 230, 255), trail = 0.15, sound = "Railgun" }, -- railgun
 	[6] = { size = Vector3.new(3.0, 0.3, 1.2), color = Color3.fromRGB(170, 140, 90), sound = "NetLaunch" }, -- Bomber net (grows as it opens)
 	[7] = { size = Vector3.new(1.5, 1.5, 4.8), color = Color3.fromRGB(235, 232, 220), rocket = true, sound = "RocketLaunch" }, -- Bombard rockets, doubled (D80)
 }
-local MUZZLE_BLEND = 8 -- studs over which a shot drops from its gun's height to the shot plane
+-- Shots fly level at the height they leave the gun (D82: they used to dip to a fixed
+-- plane, which read as curving). A mount's shot starts at that mount's muzzle and
+-- closes onto the server's line over MUZZLE_BLEND studs, in a straight line.
+local MUZZLE_BLEND = 10
+-- Which mount fires each kind of shot (D82); other kinds come from the main gun.
+local MOUNT_OF: { [number]: string } = { [2] = "wpn_gatling", [3] = "wpn_rocket", [5] = "wpn_railgun" }
 
-type Live = { part: Part, x: number, z: number, dx: number, dz: number, speed: number, accel: number, maxSpeed: number, remaining: number, owner: number, code: number, flown: number, y0: number }
+type Live = { part: Part, x: number, z: number, dx: number, dz: number, speed: number, accel: number, maxSpeed: number, remaining: number, owner: number, code: number, flown: number, y0: number, offX: number, offZ: number, spin: number }
 
 local live: { [number]: Live } = {}
 local pools: { [number]: { Part } } = {}
@@ -220,31 +225,40 @@ function Projectiles.init(fx: Folder)
 			-- last saw it (that lags by about a round trip while you drive, D78).
 			local model = ownerModel(owner)
 			local root = model and model.PrimaryPart
-			if model and root and model == player.Character then
+			-- A bounced Blaster shot starts where it hit, not at a gun.
+			local fromGun = code ~= Config.RicochetCode
+			if fromGun and model and root and model == player.Character then
 				local vel = root.AssemblyLinearVelocity
 				local lag = math.min(0.3, player:GetNetworkPing() * 2)
 				x += vel.X * lag
 				z += vel.Z * lag
 			end
-			-- Shots start at the muzzle's height and drop to the shot plane.
+			-- Where the shot visibly leaves: a mount's muzzle (which also swings to face
+			-- the shot), else the main gun's height above the server's start point.
+			local mount = MOUNT_OF[code]
+			local muzzle = if mount and ClientState.actions.mountShot then ClientState.actions.mountShot(owner, mount, angle) else nil
 			local body = model and model:FindFirstChild("Body")
 			local gun = body and body:FindFirstChild("Gun")
-			local y0 = if gun and gun:IsA("BasePart") then gun.Position.Y else HEIGHT
+			local y0 = if muzzle then muzzle.Y elseif gun and gun:IsA("BasePart") then gun.Position.Y else HEIGHT
+			local offX, offZ = 0, 0
+			if muzzle then
+				offX, offZ = muzzle.X - x, muzzle.Z - z
+			end
 			local p = acquire(code)
 			if code == NET_CODE then
 				p.Size = look.size
 			end
-			local pos = Vector3.new(x, y0, z)
+			local pos = Vector3.new(x + offX, y0, z + offZ)
 			p.CFrame = CFrame.lookAt(pos, pos + Vector3.new(dx, 0, dz))
 			setEffects(p, true)
-			live[id] = { part = p, x = x, z = z, dx = dx, dz = dz, speed = speed, accel = accel, maxSpeed = maxSpeed, remaining = range, owner = owner, code = code, flown = 0, y0 = y0 }
+			live[id] = { part = p, x = x, z = z, dx = dx, dz = dz, speed = speed, accel = accel, maxSpeed = maxSpeed, remaining = range, owner = owner, code = code, flown = 0, y0 = y0, offX = offX, offZ = offZ, spin = math.random() * math.pi * 2 }
 			-- Feedback at the gun: the sound, the recoil, and a backblast puff for rockets.
 			Sfx.at(look.sound, pos)
-			if ClientState.actions.kick then
+			if not mount and fromGun and ClientState.actions.kick then
 				ClientState.actions.kick(owner)
 			end
 			if look.rocket then
-				Vfx.puff(x - dx * 3, z - dz * 3, 1.2, "none")
+				Vfx.puff(pos.X - dx * 2, pos.Z - dz * 2, if look.corkscrew then 0.8 else 1.2, "none")
 			end
 		end
 	end)
@@ -258,7 +272,7 @@ function Projectiles.init(fx: Folder)
 			local l = live[id]
 			-- Ended early by the server: it hit something. At the end of its range it just fades.
 			if l and l.remaining > 1 and HIT_STYLE[l.code] then
-				Vfx.impact(l.x, l.z, HIT_STYLE[l.code], l.dx, l.dz)
+				Vfx.impact(l.x, l.z, HIT_STYLE[l.code], l.dx, l.dz, l.y0)
 				Sfx.at("MetalHit", Vector3.new(l.x, HEIGHT, l.z))
 			end
 			release(id)
@@ -293,7 +307,7 @@ function Projectiles.init(fx: Folder)
 				end
 			end
 			if blocked and not (LOOKS[l.code] or LOOKS[1]).rocket and l.code ~= NET_CODE then
-				Vfx.impact(x2, z2, surface, l.dx, l.dz)
+				Vfx.impact(x2, z2, surface, l.dx, l.dz, l.y0)
 			end
 			l.x, l.z = x2, z2
 			l.remaining -= step
@@ -305,9 +319,24 @@ function Projectiles.init(fx: Folder)
 			if blocked or l.remaining <= 1e-3 then
 				release(id)
 			else
-				local y = if l.flown < MUZZLE_BLEND then l.y0 + (HEIGHT - l.y0) * (l.flown / MUZZLE_BLEND) else HEIGHT
-				local pos = Vector3.new(x2, y, z2)
-				l.part.CFrame = CFrame.lookAt(pos, pos + Vector3.new(l.dx, 0, l.dz))
+				-- Level flight at the muzzle's height; a mount's offset shrinks to nothing
+				-- over MUZZLE_BLEND studs (a straight line onto the server's path).
+				local left = math.max(0, 1 - l.flown / MUZZLE_BLEND)
+				local px, pz = x2 + l.offX * left, z2 + l.offZ * left
+				local headX, headZ = l.dx, l.dz
+				if left > 0 then
+					headX, headZ = l.dx * MUZZLE_BLEND - l.offX, l.dz * MUZZLE_BLEND - l.offZ
+				end
+				local py = l.y0
+				if (LOOKS[l.code] or LOOKS[1]).corkscrew then -- mini-rockets wobble as they fly
+					local w = math.min(1, l.flown / 6) * 0.35
+					local a = l.spin + l.flown * 0.5
+					px += -l.dz * math.cos(a) * w
+					pz += l.dx * math.cos(a) * w
+					py += math.sin(a) * w
+				end
+				local pos = Vector3.new(px, py, pz)
+				l.part.CFrame = CFrame.lookAt(pos, pos + Vector3.new(headX, 0, headZ))
 			end
 		end
 	end)

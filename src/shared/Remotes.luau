@@ -22,7 +22,7 @@
 --   Death            { killerName, killerLevel, level, score, respawnAt }
 --   Notice           text                                      a system line in chat
 --   Knockback        dx, dz                                    studs to push your own robot
---   Effect "beam"    kind, x1, z1, 0, x2, z2                   Shock Coil chain segment
+--   Effect "beam"    kind, x1, z1, 0, x2, z2, ownerId?         Shock Coil chain segment (ownerId on the first)
 --   Effect "laser"   kind, x1, z1, 0, x2, z2                   Laser Gun beam (10 per second while firing)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -45,7 +45,7 @@ local RELIABLE = {
 	"BuyRobot",
 	"EquipRobot",
 	"Announce", -- big centre banner (boss warnings, hazards)
-	"MapSwap", -- fade colour before the map changes (D81)
+	"MapSwap", -- before the map changes: colour, new map name, subtitle (D81, D82)
 }
 local UNRELIABLE = {
 	"AimUpdate",

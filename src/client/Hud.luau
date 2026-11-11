@@ -550,34 +550,126 @@ local function buildBoss()
 			else ""
 	end)
 
-	-- The swap fade (D81): to the new map's colour and back, 0.5 s each way.
-	local fade = new("Frame", {
-		Position = UDim2.fromScale(-0.1, -0.1),
-		Size = UDim2.fromScale(1.2, 1.2),
-		BackgroundColor3 = Color3.new(0, 0, 0),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ZIndex = 50,
-	}, gui)
-	local fadeId = 0
-	local function fadeIn(id: number)
-		if fadeId == id then
-			TweenService:Create(fade, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+	-- The swap transition (D82, was a flat colour fade): two steel blast doors slam
+	-- shut, edged with hazard stripes and a light strip in the new map's colour, with
+	-- its name across them; once the map has changed underneath, they slide open.
+	local STEEL = Color3.fromRGB(46, 48, 54)
+	local closedTop, openTop = UDim2.fromScale(-0.1, 0.5), UDim2.fromScale(-0.1, -0.15)
+	local closedBottom, openBottom = UDim2.fromScale(-0.1, 0.5), UDim2.fromScale(-0.1, 1.15)
+	local function door(anchorY: number, edgeY: number): (Frame, Frame)
+		local d = new("Frame", {
+			AnchorPoint = Vector2.new(0, anchorY),
+			Position = if anchorY == 1 then openTop else openBottom,
+			Size = UDim2.fromScale(1.2, 0.65),
+			BackgroundColor3 = STEEL,
+			BorderSizePixel = 0,
+			ZIndex = 50,
+			Visible = false,
+		}, gui)
+		new("UIGradient", { -- darker toward the seam, like a heavy plate catching light
+			Rotation = 90,
+			Color = ColorSequence.new(if anchorY == 1 then Color3.new(1, 1, 1) else Color3.fromRGB(120, 120, 120), if anchorY == 1 then Color3.fromRGB(120, 120, 120) else Color3.new(1, 1, 1)),
+		}, d)
+		-- Hazard stripes along the meeting edge.
+		local keys = {}
+		for i = 0, 9 do
+			local c = if i % 2 == 0 then Color3.fromRGB(255, 205, 40) else Color3.fromRGB(25, 25, 25)
+			table.insert(keys, ColorSequenceKeypoint.new(i / 10, c))
+			table.insert(keys, ColorSequenceKeypoint.new(math.min(1, (i + 1) / 10 - 0.0001), c))
 		end
+		local stripes = new("Frame", {
+			AnchorPoint = Vector2.new(0, edgeY),
+			Position = UDim2.fromScale(0, edgeY),
+			Size = UDim2.new(1, 0, 0, 18),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			ZIndex = 51,
+		}, d)
+		new("UIGradient", { Color = ColorSequence.new(keys), Rotation = 8 }, stripes)
+		local strip = new("Frame", {
+			AnchorPoint = Vector2.new(0, edgeY),
+			Position = UDim2.new(0, 0, edgeY, if edgeY == 1 then -18 else 18),
+			Size = UDim2.new(1, 0, 0, 5),
+			BorderSizePixel = 0,
+			ZIndex = 51,
+		}, d)
+		return d, strip
 	end
-	Remotes.MapSwap.OnClientEvent:Connect(function(color)
-		fadeId += 1
-		local id = fadeId
-		fade.BackgroundColor3 = if typeof(color) == "Color3" then color else Color3.new(0, 0, 0)
-		TweenService:Create(fade, TweenInfo.new(0.5), { BackgroundTransparency = 0 }):Play()
+	local topDoor, topStrip = door(1, 1)
+	local bottomDoor, bottomStrip = door(0, 0)
+	local swapTitle = text(gui, {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 0.5, -30),
+		Size = UDim2.new(0.9, 0, 0, 56),
+		Font = Enum.Font.GothamBlack,
+		TextSize = if isTouch then 34 else 46,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextStrokeTransparency = 0.4,
+		TextTransparency = 1,
+		TextStrokeColor3 = Color3.new(0, 0, 0),
+		ZIndex = 52,
+		Text = "",
+	})
+	local swapSub = text(gui, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0.5, 30),
+		Size = UDim2.new(0.9, 0, 0, 28),
+		Font = Enum.Font.GothamBold,
+		TextSize = if isTouch then 16 else 20,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextColor3 = MUTED,
+		TextTransparency = 1,
+		ZIndex = 52,
+		Text = "",
+	})
+	local swapId = 0
+	local CLOSE = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	local OPEN = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local function openDoors(id: number)
+		if swapId ~= id then
+			return
+		end
+		TweenService:Create(swapTitle, OPEN, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		TweenService:Create(swapSub, OPEN, { TextTransparency = 1 }):Play()
+		TweenService:Create(topDoor, OPEN, { Position = openTop }):Play()
+		local last = TweenService:Create(bottomDoor, OPEN, { Position = openBottom })
+		last.Completed:Once(function()
+			if swapId == id then
+				topDoor.Visible, bottomDoor.Visible = false, false
+			end
+		end)
+		last:Play()
+	end
+	Remotes.MapSwap.OnClientEvent:Connect(function(color, title, subtitle)
+		swapId += 1
+		local id = swapId
+		local accent = if typeof(color) == "Color3" then color:Lerp(Color3.new(1, 1, 1), 0.35) else Color3.new(1, 0.6, 0.2)
+		topStrip.BackgroundColor3, bottomStrip.BackgroundColor3 = accent, accent
+		swapTitle.TextColor3 = accent:Lerp(Color3.new(1, 1, 1), 0.5)
+		swapTitle.Text = if type(title) == "string" then string.upper(title) else ""
+		swapSub.Text = if type(subtitle) == "string" then subtitle else ""
+		topDoor.Visible, bottomDoor.Visible = true, true
+		TweenService:Create(topDoor, CLOSE, { Position = closedTop }):Play()
+		local shut = TweenService:Create(bottomDoor, CLOSE, { Position = closedBottom })
+		shut.Completed:Once(function()
+			if swapId == id then
+				if ClientState.actions.shake then
+					ClientState.actions.shake(0.25)
+				end
+				TweenService:Create(swapTitle, TweenInfo.new(0.15), { TextTransparency = 0, TextStrokeTransparency = 0.4 }):Play()
+				TweenService:Create(swapSub, TweenInfo.new(0.15), { TextTransparency = 0 }):Play()
+			end
+		end)
+		shut:Play()
+		-- Hold until the map has changed underneath (and the name has been read).
 		local conn
 		conn = Workspace:GetAttributeChangedSignal("Map"):Connect(function()
 			conn:Disconnect()
-			task.delay(0.15, fadeIn, id)
+			task.delay(0.7, openDoors, id)
 		end)
-		task.delay(2, function() -- never stay dark, even if the map didn't change
+		task.delay(2.5, function() -- never stay shut, even if the map didn't change
 			conn:Disconnect()
-			fadeIn(id)
+			openDoors(id)
 		end)
 	end)
 

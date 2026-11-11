@@ -230,8 +230,15 @@ local function targets(selfId: number, crates: boolean): { Target }
 	return out
 end
 
+-- Is (tx, tz) within `half` radians either side of `facing`, seen from (x, z)?
+local function inFront(x: number, z: number, facing: number, half: number, tx: number, tz: number): boolean
+	local d = (math.atan2(tz - z, tx - x) - facing + math.pi) % (2 * math.pi) - math.pi
+	return math.abs(d) <= half
+end
+
 -- Nearest target within range of (x, z); robots first, crates only if no robot.
-local function nearestTarget(selfId: number, x: number, z: number, range: number, crates: boolean, skipEntity: number?, skipCrate: number?): (number?, number?)
+-- With `facing` and `half`, only targets in that arc count (mounted weapons, D82).
+local function nearestTarget(selfId: number, x: number, z: number, range: number, crates: boolean, skipEntity: number?, skipCrate: number?, facing: number?, half: number?): (number?, number?)
 	local best: Target? = nil
 	local bestD = math.huge
 	for pass = 1, 2 do
@@ -244,6 +251,9 @@ local function nearestTarget(selfId: number, x: number, z: number, range: number
 				continue
 			end
 			if (tg.e and tg.e.id == skipEntity) or (tg.crate and tg.crate.id == skipCrate) then
+				continue
+			end
+			if facing and half and not inFront(x, z, facing, half, tg.x, tg.z) then
 				continue
 			end
 			local d = math.sqrt((tg.x - x) ^ 2 + (tg.z - z) ^ 2) - tg.r
@@ -763,9 +773,11 @@ local function firePrimary(e: World.Entity, t: number)
 	end
 end
 
--- Shock Coil: hits the nearest target, then jumps to the next nearest ones.
-local function fireShock(e: World.Entity, def, damage: number, rank: number)
+-- Shock Coil: hits the nearest target in the mounts' arc, then jumps to the next
+-- nearest ones (any direction).
+local function fireShock(e: World.Entity, def, damage: number, rank: number, facing: number)
 	local x, z = World.position(e)
+	local half = math.rad(Config.MountArcDegrees / 2)
 	local range = def.range * e.stats.rangeMult
 	local all = targets(e.id, def.targetsCrates)
 	local hit: { [Target]: boolean } = {}
@@ -775,7 +787,7 @@ local function fireShock(e: World.Entity, def, damage: number, rank: number)
 		local best: Target? = nil
 		local bestD = math.huge
 		for _, tg in all do
-			if not hit[tg] then
+			if not hit[tg] and (k > 0 or inFront(x, z, facing, half, tg.x, tg.z)) then
 				local d = math.sqrt((tg.x - fromX) ^ 2 + (tg.z - fromZ) ^ 2) - tg.r
 				if d <= reach and d < bestD then
 					best, bestD = tg, d
@@ -787,7 +799,8 @@ local function fireShock(e: World.Entity, def, damage: number, rank: number)
 		end
 		hit[best] = true
 		local dmg = damage * def.chainFalloff ^ k
-		Remotes.Effect:FireAllClients("beam", fromX, fromZ, 0, best.x, best.z)
+		-- The first bolt names its robot, so clients start it at the coil (D82).
+		Remotes.Effect:FireAllClients("beam", fromX, fromZ, 0, best.x, best.z, if k == 0 then e.id else nil)
 		if best.e then
 			Combat.damage(best.e, dmg, e, false, best.x, best.z)
 		elseif best.crate then
@@ -916,6 +929,14 @@ local function fireMounts(e: World.Entity, t: number)
 	end
 	local s = e.stats
 	local x, z = World.position(e)
+	-- Mounts swivel within the hull's front arc, like the turret (D82), so they only
+	-- shoot what they can visibly point at.
+	local facing = e.aim
+	if e.root then
+		local look = e.root.CFrame.LookVector
+		facing = math.atan2(look.Z, look.X)
+	end
+	local half = math.rad(Config.MountArcDegrees / 2)
 	for _, weaponId in e.build.mounts do
 		local key = MOUNT_WEAPON[weaponId]
 		local def = key and W[key]
@@ -929,7 +950,7 @@ local function fireMounts(e: World.Entity, t: number)
 		rate *= s.fireRateMult
 
 		if key == "shock" then
-			if fireShock(e, def, damage, rank) then
+			if fireShock(e, def, damage, rank, facing) then
 				fireReady(e, weaponId, rate, t)
 			end
 			continue
@@ -954,7 +975,7 @@ local function fireMounts(e: World.Entity, t: number)
 			continue
 		end
 		local range = def.range * s.rangeMult
-		local tx, tz = nearestTarget(e.id, x, z, range, def.targetsCrates)
+		local tx, tz = nearestTarget(e.id, x, z, range, def.targetsCrates, nil, nil, facing, half)
 		if not tx or not tz then
 			continue
 		end

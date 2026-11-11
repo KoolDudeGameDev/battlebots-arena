@@ -24,9 +24,14 @@ local SWIVEL = math.rad(PRES.swivelDegrees)
 local HEAT_COLD = Color3.fromRGB(90, 40, 30)
 local HEAT_HOT = Color3.fromRGB(255, 150, 50)
 
+-- A mounted weapon's swivel (D82): it follows the aim, but swings to face each of
+-- its own shots for a moment and kicks back when it fires.
+type Mount = { motor: Motor6D, weapon: string?, muzzle: Attachment?, rel: number, aimAngle: number, aimUntil: number, kick: number }
+
 -- Animated parts found in a robot's Body (rescanned whenever the body is rebuilt).
 type Rig = {
-	yaw: { Motor6D }, -- turret and mount swivels: turn with the aim inside the swivel arc
+	yaw: { Motor6D }, -- turret: turns with the aim inside the swivel arc
+	mounts: { Mount },
 	gun: Motor6D?,
 	gunPart: BasePart?,
 	blink: { BasePart },
@@ -47,7 +52,8 @@ type View = {
 	hitDisc: CylinderHandleAdornment,
 	rangeRing: CylinderHandleAdornment,
 	bubble: Part?,
-	field: Part?, -- Null Field disc
+	field: Part?, -- Null Field dome
+	fieldT: number, -- seconds since the dome opened
 	net: Part?, -- Bomber net
 	fadeBody: Instance?, -- the Body the fade list was built for
 	fadeParts: { BasePart },
@@ -267,6 +273,7 @@ local function add(model: Instance)
 		rangeRing = rangeRing,
 		bubble = nil,
 		field = nil,
+		fieldT = 0,
 		net = nil,
 		fadeBody = nil,
 		fadeParts = {},
@@ -391,11 +398,24 @@ end
 
 -- Finds the parts this robot animates, once per body build.
 local function scan(body: Instance): Rig
-	local rig: Rig = { yaw = {}, gun = nil, gunPart = nil, blink = {}, heat = {}, flameLoop = nil, sawLoop = nil }
+	local rig: Rig = { yaw = {}, mounts = {}, gun = nil, gunPart = nil, blink = {}, heat = {}, flameLoop = nil, sawLoop = nil }
 	for _, d in body:GetDescendants() do
 		if d:IsA("Motor6D") then
-			if d.Name == "TurretMotor" or d.Name == "SwivelMotor" then
+			if d.Name == "TurretMotor" then
 				table.insert(rig.yaw, d)
+			elseif d.Name == "SwivelMotor" then
+				local sw = d.Part1
+				local weapon = sw and sw:GetAttribute("Mount")
+				local muzzle = sw and sw:FindFirstChild("Muzzle")
+				table.insert(rig.mounts, {
+					motor = d,
+					weapon = if type(weapon) == "string" then weapon else nil,
+					muzzle = if muzzle and muzzle:IsA("Attachment") then muzzle else nil,
+					rel = 0,
+					aimAngle = 0,
+					aimUntil = 0,
+					kick = 0,
+				})
 			elseif d.Name == "GunMotor" then
 				rig.gun = d
 				rig.gunPart = d.Part1
@@ -430,9 +450,44 @@ function Robots.kick(entityId: number)
 	end
 end
 
+-- Hull-relative swivel angle (inside the arc) that points along world angle `angle`.
+local function relAngle(root: BasePart, angle: number): number
+	local look = root.CFrame:VectorToObjectSpace(Vector3.new(math.cos(angle), 0, math.sin(angle)))
+	return math.clamp(math.atan2(-look.X, -look.Z), -SWIVEL, SWIVEL)
+end
+
+-- A mounted weapon fired along world angle `angle` (D82): its swivel snaps to face the
+-- shot and kicks back. Returns where the shot leaves (the muzzle), if the robot is here.
+function Robots.mountShot(entityId: number, weapon: string, angle: number): Vector3?
+	for model, v in views do
+		if model:GetAttribute("EntityId") ~= entityId then
+			continue
+		end
+		local root = model.PrimaryPart
+		local rig = v.rig
+		if not root or not rig then
+			return nil
+		end
+		for _, m in rig.mounts do
+			if m.weapon == weapon then
+				m.aimAngle, m.aimUntil, m.kick = angle, os.clock() + 0.7, 1
+				m.rel = relAngle(root, angle)
+				if not m.muzzle then
+					return nil
+				end
+				local swivel = root.CFrame * baseOf(m.motor) * CFrame.Angles(0, m.rel, 0)
+				return (swivel * CFrame.new(m.muzzle.Position)).Position
+			end
+		end
+		return nil
+	end
+	return nil
+end
+
 function Robots.init(folder: Folder)
 	fxFolder = folder
 	ClientState.actions.kick = Robots.kick
+	ClientState.actions.mountShot = Robots.mountShot
 	for _, m in CollectionService:GetTagged("Robot") do
 		task.spawn(add, m)
 	end
@@ -504,15 +559,19 @@ function Robots.init(folder: Folder)
 			-- Turret and mounted weapons (D78): they turn toward the aim, but only
 			-- within a 180-degree arc in front of the hull. The hull turns to cover
 			-- the rest (InputController), so the guns never point through it.
-			if rig and #rig.yaw > 0 then
-				local rel = 0
-				if v.hasAim then
-					local look = root.CFrame:VectorToObjectSpace(Vector3.new(math.cos(v.angle), 0, math.sin(v.angle)))
-					rel = math.clamp(math.atan2(-look.X, -look.Z), -SWIVEL, SWIVEL)
-				end
+			if rig then
+				local rel = if v.hasAim then relAngle(root, v.angle) else 0
 				local turn = CFrame.Angles(0, rel, 0)
 				for _, m in rig.yaw do
 					m.C0 = baseOf(m) * turn
+				end
+				-- Mounts (D82): face their last shot for a moment, then ease back to the aim.
+				local clock = os.clock()
+				for _, m in rig.mounts do
+					local want = if clock < m.aimUntil then relAngle(root, m.aimAngle) else rel
+					m.rel += (want - m.rel) * math.min(1, dt * 14)
+					m.kick = math.max(0, m.kick - dt / 0.15)
+					m.motor.C0 = baseOf(m.motor) * CFrame.Angles(0, m.rel, 0) * CFrame.new(0, 0, m.kick * m.kick * 0.3 * scale)
 				end
 			end
 
@@ -731,12 +790,13 @@ function Robots.init(folder: Folder)
 				flipMotor.C0 = base * CFrame.Angles(math.rad(70) * up, 0, 0)
 			end
 
-			-- Null Field: a big purple disc on the ground while it is up (D68).
+			-- Null Field (D68, D82): a huge force-field dome over the robot, as big as the
+			-- field (it grows with the skill's rank). It swells open, then holds.
 			local fieldR = model:GetAttribute("Field")
 			local fieldOn = type(fieldR) == "number" and fieldR > 0
 			if fieldOn and not v.field then
 				local d = Instance.new("Part")
-				d.Shape = Enum.PartType.Cylinder
+				d.Shape = Enum.PartType.Ball
 				d.Material = Enum.Material.ForceField
 				d.Color = Color3.fromRGB(170, 110, 255)
 				d.Anchored = true
@@ -744,15 +804,33 @@ function Robots.init(folder: Folder)
 				d.CanQuery = false
 				d.CanTouch = false
 				d.CastShadow = false
+				d.Size = Vector3.one
+				local edge = Instance.new("CylinderHandleAdornment")
+				edge.Name = "Edge"
+				edge.Adornee = d
+				edge.Height = 0.15
+				edge.CFrame = CFrame.new(0, 0.1, 0) * CFrame.Angles(math.rad(90), 0, 0)
+				edge.Color3 = Color3.fromRGB(200, 150, 255)
+				edge.Transparency = 0.25
+				edge.Parent = d
 				d.Parent = fxFolder
 				v.field = d
+				v.fieldT = 0
 			elseif not fieldOn and v.field then
 				v.field:Destroy()
 				v.field = nil
 			end
 			if v.field and type(fieldR) == "number" then
-				v.field.Size = Vector3.new(3, fieldR * 2, fieldR * 2)
-				v.field.CFrame = CFrame.new(root.Position.X, 0.6, root.Position.Z) * CFrame.Angles(0, 0, math.rad(90))
+				v.fieldT += dt
+				local open = 1 - (1 - math.min(1, v.fieldT / 0.3)) ^ 3
+				local r = math.max(0.5, fieldR * open)
+				v.field.Size = Vector3.one * r * 2
+				v.field.CFrame = CFrame.new(root.Position.X, 0, root.Position.Z) -- centred on the ground: a dome
+				local edge = v.field:FindFirstChild("Edge") :: CylinderHandleAdornment?
+				if edge then -- a bright ring where the dome meets the ground
+					edge.Radius = r
+					edge.InnerRadius = math.max(0, r - 0.5)
+				end
 			end
 		end
 	end)

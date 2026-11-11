@@ -82,9 +82,11 @@ return function(test)
 		assert(b.hp + b.armor > r.hp + r.armor and b.range < r.range, "the card shows the reach-for-toughness trade")
 	end)
 
-	test("coin sources: map coins worth 5, chests worth 15-35", function()
+	test("coin sources (D82): up to 6 map coins worth 5, chests worth 25-50 every 2-3 min", function()
 		local C = Config.Coins
-		assert(C.value == 5 and C.mapMax == 3)
-		assert(C.chest.pieces[1] * C.value == 15 and C.chest.pieces[2] * C.value == 35)
+		assert(C.value == 5 and C.mapMax == 6)
+		assert(C.mapEvery[1] == 20 and C.mapEvery[2] == 35)
+		assert(C.chest.pieces[1] * C.value == 25 and C.chest.pieces[2] * C.value == 50)
+		assert(C.chest.respawn[1] == 120 and C.chest.respawn[2] == 180)
 	end)
 end

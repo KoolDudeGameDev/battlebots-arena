@@ -26,6 +26,7 @@ local ClientState = {
 		garage: (open: boolean?) -> (),
 		garageRefresh: () -> (),
 		kick: (entityId: number) -> (), -- a shot left this robot's gun (recoil)
+		mountShot: (entityId: number, weapon: string, angle: number) -> Vector3?, -- a mount fired: its muzzle (D82)
 	},
 }
 

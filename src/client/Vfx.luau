@@ -286,10 +286,11 @@ local WOOD = Color3.fromRGB(110, 75, 45)
 local METAL = Color3.fromRGB(70, 74, 82)
 local DIRT = Color3.fromRGB(120, 95, 65)
 
--- A shot hitting something at (x, z). style: "robot", "laser", "stone", "wood".
--- (dx, dz) is the shot's direction, so chips fly back toward the shooter.
-function Vfx.impact(x: number, z: number, style: string, dx: number?, dz: number?)
-	local pos = Vector3.new(x, 3, z)
+-- A shot hitting something at (x, z). style: "robot", "laser", "shock", "stone", "wood".
+-- (dx, dz) is the shot's direction, so chips fly back toward the shooter; y is the
+-- shot's height (default 3).
+function Vfx.impact(x: number, z: number, style: string, dx: number?, dz: number?, y: number?)
+	local pos = Vector3.new(x, y or 3, z)
 	if not near(pos) then
 		return
 	end
@@ -297,6 +298,8 @@ function Vfx.impact(x: number, z: number, style: string, dx: number?, dz: number
 		emit("sparks", pos, 7)
 	elseif style == "laser" then
 		emit("laserSparks", pos, 4)
+	elseif style == "shock" then
+		emit("shockSparks", pos, 8)
 	elseif style == "wood" then
 		emit("dust", pos, 1)
 		debris(pos, 2, WOOD, Enum.Material.Wood, 0.35, 10)
@@ -414,6 +417,16 @@ function Vfx.init(fx: Folder)
 		Lifetime = NumberRange.new(0.1, 0.25),
 		Speed = NumberRange.new(10, 20),
 		SpreadAngle = Vector2.new(180, 180),
+	})
+	makeEmitter("shockSparks", {
+		Texture = TEX.spark,
+		Color = ColorSequence.new(Color3.fromRGB(230, 250, 255), Color3.fromRGB(90, 170, 255)),
+		LightEmission = 1,
+		Size = seq(0.5, 0),
+		Lifetime = NumberRange.new(0.1, 0.3),
+		Speed = NumberRange.new(14, 26),
+		SpreadAngle = Vector2.new(180, 180),
+		Drag = 4,
 	})
 	makeEmitter("chips", {
 		Texture = TEX.spark,

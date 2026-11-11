@@ -1,5 +1,6 @@
 -- Two views (D37): the default third-person camera behind the robot that turns
--- with ClientState.camYaw, and the fixed top-down camera (about 66 degrees of tilt). Both follow your robot, hold on the death point, snap to
+-- with ClientState.camYaw, and the fixed top-down camera (about 66 degrees of tilt),
+-- which pulls back as your weapon's reach grows (D82). Both follow your robot, hold on the death point, snap to
 -- a new robot, and shake when you are hit.
 
 local Players = game:GetService("Players")
@@ -24,6 +25,7 @@ end
 
 function CameraController.init()
 	local focus = Vector3.zero
+	local zoom = 1
 	local lastCharacter: Model? = nil
 	local rng = Random.new()
 
@@ -67,9 +69,13 @@ function CameraController.init()
 			local eye = base - dir * math.cos(pitch) * THIRD_DIST * scale + Vector3.new(0, math.sin(pitch) * THIRD_DIST * scale, 0)
 			cam.CFrame = CFrame.lookAt(eye, base + dir * THIRD_LOOK_AHEAD)
 		else
+			-- Zoom out with your weapon's reach (D82), never closer than the default view.
+			local reach = if character then character:GetAttribute("AttackRange") else nil
+			local want = math.clamp((if type(reach) == "number" then reach else 0) / C.ZoomBaseRange, 1, C.ZoomMax)
+			zoom += (want - zoom) * math.min(1, dt * 3)
 			cam.FieldOfView = C.Fov
 			local look = focus + offset
-			cam.CFrame = CFrame.lookAt(look + Vector3.new(0, C.Height, C.Back), look)
+			cam.CFrame = CFrame.lookAt(look + Vector3.new(0, C.Height * zoom, C.Back * zoom), look)
 		end
 	end)
 end
