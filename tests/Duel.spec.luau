@@ -9,9 +9,13 @@ local Duel = require("./Duel")
 -- pay: the charger ends with at most this much of its health.
 local CHARGER_LEFT = 0.5
 
-local function pairs2(fn)
+-- The Bombard is out of the D66 duels since D85: Gregory chose a full damage buff
+-- over keeping chargers ahead of it in open ground.
+local EXEMPT = { bombard = true }
+
+local function pairs2(fn, all: boolean?)
 	for _, r in Chassis.list do
-		if not r.comingSoon and Duel.isRanged(r.id) then
+		if not r.comingSoon and Duel.isRanged(r.id) and (all or not EXEMPT[r.id]) then
 			for _, c in Chassis.list do
 				if not c.comingSoon and Duel.isClose(c.id) then
 					fn(r.id, c.id)
@@ -30,7 +34,7 @@ return function(test)
 	test("ranged robots out-reach close-range robots but are less tough", function()
 		pairs2(function(r, c)
 			assert(tough(r) < tough(c), `{r} should be less tough than {c}`)
-		end)
+		end, true)
 	end)
 
 	test("standing still while a close-range robot charges loses", function()

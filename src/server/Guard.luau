@@ -77,11 +77,16 @@ local function check(e: World.Entity, interval: number)
 	end
 
 	-- A dash may show up in physics before its UseSkill request arrives.
-	if e.build.skill == "skl_dash" then
-		local dashRoom = Config.Skills.skl_dash.distance * e.stats.scale
+	-- The Bomber core's Boost (D84) is a shorter dash with its own cooldown.
+	local boost = e.chassisId == "bomber" and e.build.small
+	if e.build.skill == "skl_dash" or boost then
+		local dashRoom = (if boost then Config.Bomber.boost.distance else Config.Skills.skl_dash.distance) * e.stats.scale
 		local recentGrant = now - e.dashGrantAt < AC.DashWindow
 		if disp <= allowed + dashRoom and (recentGrant or now >= e.skillReadyAt) then
-			if not recentGrant then
+			if not recentGrant and boost then
+				e.skillReadyAt = now + Config.Bomber.boost.cooldown
+				e.dashGrantAt = now
+			elseif not recentGrant then
 				World.hooks.consumeDash(e) -- moved like a dash: charge the cooldown
 			end
 			e.lastValidPos = pos

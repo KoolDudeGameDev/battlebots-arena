@@ -59,6 +59,13 @@ export type Entity = {
 	slowFactor: number, -- walk speed factor from enemy fields and trap pins (1 = not slowed)
 	rootedUntil: number, -- Spike Traps pin (D69)
 	netUntil: number, -- hit by a Bomber net (D70)
+	netImmuneUntil: number, -- a net can't slow this robot again until then (D84)
+	markedUntil: number, -- marked by a Bomber net: bigger blast and Scrap Cannon hits (D84)
+	pressure: number, -- Bomber: 0-100, fills from damage the shell soaks (D84)
+	pressureAt: number, -- when Pressure last grew (it drains after a lull)
+	husk: any, -- Bomber core: its empty shell (a Combat wall) while it stands (D84)
+	reclaimT: number, -- Bomber core: seconds parked on the husk
+	waitingForArena: boolean, -- killed in a boss arena: out until the fight ends (D85)
 	stunnedUntil: number, -- flipped: can't attack (D72)
 	guardHp: number, -- Shield Generator front shield (D69)
 	guardHitAt: number,
@@ -107,6 +114,7 @@ World.hooks = {} :: {
 	applyPod: (e: Entity, kind: string) -> (),
 	spawnPod: (kind: string, x: number, z: number) -> (),
 	setSmall: (e: Entity, small: boolean) -> (),
+	removeHusk: (e: Entity) -> (), -- the Bomber core's shell, if it stands (Combat, D84)
 	addCoins: (e: Entity, amount: number) -> (),
 	bossDied: (e: Entity, x: number, z: number) -> (),
 	syncHp: (e: Entity) -> (),

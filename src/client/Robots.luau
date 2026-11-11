@@ -48,6 +48,9 @@ type View = {
 	hpFill: Frame,
 	armorBack: Frame,
 	armorFill: Frame,
+	pressureBack: Frame, -- Bomber shell: how big its blast is now (D84)
+	pressureFill: Frame,
+	markLabel: TextLabel, -- marked by a Bomber net (D84)
 	highlight: Highlight,
 	hitDisc: CylinderHandleAdornment,
 	rangeRing: CylinderHandleAdornment,
@@ -125,6 +128,10 @@ local function refresh(v: View)
 	v.armorBack.Visible = not boss and hasArmor
 	v.levelLabel.Visible = not boss
 	v.armorFill.Size = UDim2.fromScale(math.clamp(armor / math.max(maxArmor, armor, 1), 0, 1), 1)
+	local pressure = m:GetAttribute("Pressure")
+	v.pressureBack.Visible = not boss and m:GetAttribute("Chassis") == "bomber" and not m:GetAttribute("Small") and type(pressure) == "number"
+	v.pressureFill.Size = UDim2.fromScale(math.clamp((tonumber(pressure) or 0) / 100, 0, 1), 1)
+	v.markLabel.Visible = m:GetAttribute("Marked") == true
 	local scale = m:GetAttribute("VisualScale") or 1
 	v.gui.StudsOffsetWorldSpace = Vector3.new(0, 2.5 + 3 * scale, 0)
 
@@ -186,17 +193,17 @@ local function add(model: Instance)
 	end
 
 	local gui = Instance.new("BillboardGui")
-	gui.Size = UDim2.fromOffset(170, 58)
+	gui.Size = UDim2.fromOffset(170, 78) -- the top line is the MARKED tag (D84)
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 5, 0)
 	gui.AlwaysOnTop = true
 	gui.Adornee = root
 	gui.ResetOnSpawn = false
 	local name = (model:GetAttribute("DisplayName") or model.Name) :: string
-	label(gui, name, 14, UDim2.fromOffset(0, 0), 16)
-	local levelLabel = label(gui, "Lv 0", 14, UDim2.fromOffset(0, 16), 16)
+	label(gui, name, 14, UDim2.fromOffset(0, 16), 16)
+	local levelLabel = label(gui, "Lv 0", 14, UDim2.fromOffset(0, 32), 16)
 	local hpBack = Instance.new("Frame")
 	hpBack.Size = UDim2.fromOffset(130, 11)
-	hpBack.Position = UDim2.new(0.5, -65, 0, 35)
+	hpBack.Position = UDim2.new(0.5, -65, 0, 51)
 	hpBack.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 	hpBack.BorderSizePixel = 0
 	hpBack.Parent = gui
@@ -206,7 +213,7 @@ local function add(model: Instance)
 	hpFill.Parent = hpBack
 	local armorBack = Instance.new("Frame")
 	armorBack.Size = UDim2.fromOffset(130, 6)
-	armorBack.Position = UDim2.new(0.5, -65, 0, 48)
+	armorBack.Position = UDim2.new(0.5, -65, 0, 64)
 	armorBack.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 	armorBack.BorderSizePixel = 0
 	armorBack.Visible = false
@@ -215,6 +222,23 @@ local function add(model: Instance)
 	armorFill.BackgroundColor3 = Color3.fromRGB(110, 170, 255)
 	armorFill.BorderSizePixel = 0
 	armorFill.Parent = armorBack
+	-- Bomber Pressure (D84): an orange gauge under the bars, so everyone can see how
+	-- big the blast would be right now.
+	local pressureBack = Instance.new("Frame")
+	pressureBack.Size = UDim2.fromOffset(130, 5)
+	pressureBack.Position = UDim2.new(0.5, -65, 0, 71)
+	pressureBack.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	pressureBack.BorderSizePixel = 0
+	pressureBack.Visible = false
+	pressureBack.Parent = gui
+	local pressureFill = Instance.new("Frame")
+	pressureFill.BackgroundColor3 = Color3.fromRGB(255, 140, 40)
+	pressureFill.BorderSizePixel = 0
+	pressureFill.Parent = pressureBack
+	-- A yellow chevron while a Bomber net has marked this robot.
+	local markLabel = label(gui, "▼ MARKED", 12, UDim2.fromOffset(0, 0), 14)
+	markLabel.TextColor3 = Color3.fromRGB(255, 215, 40)
+	markLabel.Visible = false
 	gui.Parent = player:WaitForChild("PlayerGui")
 
 	local highlight = Instance.new("Highlight")
@@ -268,6 +292,9 @@ local function add(model: Instance)
 		hpFill = hpFill,
 		armorBack = armorBack,
 		armorFill = armorFill,
+		pressureBack = pressureBack,
+		pressureFill = pressureFill,
+		markLabel = markLabel,
 		highlight = highlight,
 		hitDisc = hitDisc,
 		rangeRing = rangeRing,
@@ -320,7 +347,7 @@ local function add(model: Instance)
 		v.lastArmor = armor
 		refresh(v)
 	end))
-	for _, attr in { "MaxHP", "MaxArmor", "HitRadius", "AttackRange", "VisualScale" } do
+	for _, attr in { "MaxHP", "MaxArmor", "HitRadius", "AttackRange", "VisualScale", "Pressure", "Marked", "Small" } do
 		table.insert(v.conns, model:GetAttributeChangedSignal(attr):Connect(function()
 			refresh(v)
 		end))

@@ -3,6 +3,7 @@
 -- which pulls back as your weapon's reach grows (D82). Both follow your robot, hold on the death point, snap to
 -- a new robot, and shake when you are hit.
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -51,6 +52,14 @@ function CameraController.init()
 			else
 				local alpha = 1 - (1 - C.Lerp) ^ (dt * 60)
 				focus = focus:Lerp(target, alpha)
+			end
+		else
+			-- Out of a boss fight (D85): watch the boss until the fight ends.
+			local boss = CollectionService:GetTagged("Boss")[1]
+			local bossRoot = boss and boss:IsA("Model") and boss.PrimaryPart
+			if bossRoot then
+				local p = bossRoot.Position
+				focus = focus:Lerp(Vector3.new(p.X, 0, p.Z), 1 - (1 - C.Lerp * 0.3) ^ (dt * 60))
 			end
 		end
 

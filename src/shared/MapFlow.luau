@@ -91,6 +91,17 @@ function MapFlow.tick(cfg: any, s: State, t: number, players: number, roll: numb
 	return s, nil
 end
 
+-- Every player in the arena is down (D85): the boss wins now, as if its time ran out
+-- (the next tick sends everyone home). Only counts in the arena.
+function MapFlow.wiped(s: State, t: number): State
+	if s.phase ~= "arena" then
+		return s
+	end
+	local n = table.clone(s)
+	n.endsAt = t
+	return n
+end
+
 -- The boss died. Only counts in the arena, and before the escape has happened
 -- (call this before tick() in the same frame).
 function MapFlow.defeated(cfg: any, s: State, t: number): (State, string?)

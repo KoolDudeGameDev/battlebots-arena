@@ -121,10 +121,9 @@ Config.Weapons = {
 	-- Bombard's primary (D44, D45): rockets launch slow and accelerate.
 	launcher = {
 		code = 7, -- its own look: twice the Rocket Pod's size (D80)
-		-- D83: 26 -> 34 and 22 -> 25, held fair by arming below: the most the duel model
-		-- (tests/Duel.spec, D66) allows before a charger stops winning in open ground.
-		damage = 34,
-		splashDamage = 25,
+		-- D85: 26 -> 45 and 22 -> 32, Gregory's full buff (the Bombard is out of D66).
+		damage = 45,
+		splashDamage = 32,
 		splashRadius = 24, -- doubled (D80)
 		fireRate = 1.2,
 		launchSpeed = 40,
@@ -133,10 +132,6 @@ Config.Weapons = {
 		range = 55,
 		radius = 1.4, -- doubled with the splash (D80)
 		knockback = 6, -- studs of push on a scale-1 robot at the blast centre
-		-- Rockets arm in flight (D83): a hit after `armDistance` studs does full damage;
-		-- point-blank it does `unarmed` of it. Strong at range, weak when caught.
-		armDistance = 30,
-		unarmed = 0.15,
 	},
 	-- Rare variants (D67). The laser is a hitscan beam: damage per tick, 10 ticks/s
 	-- (70 DPS vs the blaster's 48), stopped by the first robot or cover.
@@ -205,9 +200,13 @@ Config.Weapons = {
 		minSpeedFraction = 0.3, -- only hurts while you are driving
 		knockback = 18, -- a real toss (D72)
 	},
-	-- Bomber's net gun (D70): no damage; a robot it hits drives at netSlow for netDuration s.
+	-- Bomber's net gun (D70, D84): no damage. A robot it hits is marked for markDuration s
+	-- and drives at netSlow for netDuration s, then can't be slowed again for `immunity` s
+	-- (it can still be marked). Bosses only slow to bossSlow.
 	-- The net opens in flight (D72): radius grows from `radius` by openPerStud per stud flown, up to openRadius.
-	netgun = { code = 6, damage = 0, fireRate = 0.8, speed = 70, range = 32, radius = 1.5, openRadius = 4.5, openPerStud = 0.3, netDuration = 2.5, netSlow = 0.45 },
+	netgun = { code = 6, damage = 0, fireRate = 0.9, speed = 70, range = 32, radius = 1.5, openRadius = 4.5, openPerStud = 0.3, netDuration = 1.6, netSlow = 0.55, immunity = 2, markDuration = 6, bossSlow = 0.8 },
+	-- The Bomber core's Scrap Cannon (D84): a short burst of pellets, stronger on marked robots.
+	scrapgun = { code = 8, damage = 7, fireRate = 1.6, speed = 120, range = 16, radius = 0.45, pellets = 3, spreadDegrees = 10, markedBonus = 0.5 },
 	-- Melee mounts (D69)
 	sidesaw = { damage = 6, fireRate = 4, reach = 2.5, damagePerRank = 0.2 }, -- grinds every robot within reach of your hitbox, any side
 	traps = {
@@ -237,8 +236,9 @@ Config.Skills = {
 	-- Detonate (D80): the blast fills the drawn attack ring (Stats.attackRange); damage at the
 	-- ring's edge is `edge` of the centre damage.
 	-- fuse (D83): seconds of glowing, beeping warning between pressing Space and the blast.
-	-- If the Bomber dies during the fuse there is no blast.
-	skl_bomb = { cooldown = 2, damage = 300, edge = 0.5, damagePerRank = 0.25, knockback = 16, fuse = 0.8 },
+	-- If the Bomber dies during the fuse there is no blast. Damage comes from Pressure
+	-- (Config.Bomber.blast, Stats.bombDamage, D84).
+	skl_bomb = { cooldown = 2, edge = 0.5, damagePerRank = 0.25, knockback = 16, fuse = 0.8 },
 	-- Null Field (D68): a big bubble around you; enemy shots inside crawl (dodgeable)
 	-- and enemy robots inside drive at half speed. Beams, flames and melee are not slowed.
 	skl_nullfield = { radius = 18, radiusPerRank = 4, duration = 3, durationPerRank = 1, cooldown = 15, projectileSlow = 0.25, robotSlow = 0.5 },
@@ -416,7 +416,27 @@ Config.Hazards = {
 -- Bomber forms (D70): HP left after detonating (fraction of max, if higher), and the
 -- HP fraction that rebuilds the bombs and makes it big again. The small form heals
 -- smallRegenPerSecond of max HP per second, the one exception to D33 (D80).
-Config.Bomber = { hpAfter = 0.25, rebuildAt = 0.6, smallRegenPerSecond = 0.01 }
+-- D84 redesign (11-bomber-redesign.md):
+--   pressure: fills from damage the big shell absorbs and robots it nets; drains after a lull.
+--   blast: centre damage from min (0 Pressure) to max (100); marked robots take more and
+--     are knocked down; bosses take bossFactor of it and are never knocked down.
+--   plating: the big shell takes this much less splash damage.
+--   husk: the empty shell left by the blast (blocks shots and robots) for `life` s.
+--   reclaim: park the core on its husk for `hold` s to be big again (reset by damage).
+--   boost: the core's Space, a short dash.
+Config.Bomber = {
+	hpAfter = 0.35,
+	rebuildAt = 0.6,
+	smallRegenPerSecond = 0.01,
+	pressure = { perDamage = 1 / 3, perNet = 10, drain = 3, drainDelay = 5 },
+	blast = { min = 150, max = 400, markedBonus = 0.3, knockdown = 0.6, bossFactor = 0.6 },
+	plating = 0.15,
+	husk = { hpFraction = 0.25, life = 25 },
+	reclaim = { hold = 1.5, reach = 2.5 },
+	boost = { distance = 14, cooldown = 5 },
+	-- Bomber-only cards (D84)
+	cards = { meshWiden = 0.25, valveDrain = 0.5, valveNet = 5, shapedRadius = 0.12, hotFuse = 0.55, markedExtra = 3, markedScrap = 0.25 },
+}
 
 -- Health never regenerates (D33), except the small Bomber (D80). Armor comes only from the Armor Plating card.
 Config.Armor = {

@@ -105,11 +105,47 @@ local function syncArmor(e: World.Entity)
 end
 Combat.syncArmor = syncArmor
 
--- Bomber net (D70): the robot drives at netSlow for netDuration seconds.
-function Combat.applyNet(e: World.Entity, hx: number, hz: number)
-	e.netUntil = now() + Config.Weapons.netgun.netDuration
+local function isShell(e: World.Entity): boolean
+	return e.chassisId == "bomber" and not e.build.small
+end
+
+-- Bomber Pressure (D84), 0-100, shown to everyone as the model's Pressure attribute.
+local function addPressure(e: World.Entity, amount: number)
+	if amount <= 0 or not isShell(e) then
+		return
+	end
+	e.pressure = math.min(100, e.pressure + amount)
+	e.pressureAt = now()
 	if e.model then
-		e.model:SetAttribute("Netted", true)
+		e.model:SetAttribute("Pressure", math.floor(e.pressure))
+	end
+end
+
+local function setPressure(e: World.Entity, value: number)
+	e.pressure = value
+	if e.model then
+		e.model:SetAttribute("Pressure", math.floor(value))
+	end
+end
+
+-- Bomber net (D70, D84): marks the robot, slows it for netDuration s, then it can't be
+-- slowed again for `immunity` s (it can still be marked). The netter gains Pressure.
+function Combat.applyNet(e: World.Entity, hx: number, hz: number, owner: World.Entity?)
+	local N = Config.Weapons.netgun
+	local t = now()
+	local marked = (owner and owner.build.stacks.bmb_marked or 0) * Config.Bomber.cards.markedExtra
+	e.markedUntil = math.max(e.markedUntil, t + N.markDuration + marked)
+	if t >= e.netImmuneUntil then
+		e.netUntil = t + N.netDuration
+		e.netImmuneUntil = e.netUntil + N.immunity
+	end
+	if e.model then
+		e.model:SetAttribute("Netted", t < e.netUntil)
+		e.model:SetAttribute("Marked", true)
+	end
+	if owner then
+		local valve = owner.build.stacks.bmb_valve or 0
+		addPressure(owner, Config.Bomber.pressure.perNet + valve * Config.Bomber.cards.valveNet)
 	end
 	Remotes.Effect:FireAllClients("net", hx, hz, 3)
 end
@@ -410,6 +446,11 @@ function Combat.damage(target: World.Entity, amount: number, attacker: World.Ent
 		end
 	end
 
+	-- The Bomber's shell shrugs off part of any splash (D84).
+	if splash and isShell(target) then
+		amount *= 1 - Config.Bomber.plating
+	end
+
 	-- Armor absorbs first and may deflect the whole hit (D33).
 	local chance = target.stats.deflectChance
 	if chance <= 0 and target.tempArmor > 0 then
@@ -431,6 +472,7 @@ function Combat.damage(target: World.Entity, amount: number, attacker: World.Ent
 	target.armor = math.max(0, target.armor - (armorTaken - fromTemp))
 	target.hp = hp
 	syncArmor(target)
+	addPressure(target, (armorTaken + hpTaken) * Config.Bomber.pressure.perDamage) -- the shell turns hits into Pressure (D84)
 
 	if target.hp <= 0 then
 		target.hp = 0
@@ -548,11 +590,103 @@ local function spawnWall(e: World.Entity, rank: number)
 	end)
 end
 
+-- The Bomber's husk (D84): the empty shell left by the blast. A wall (blocks shots and
+-- robots) with HP; the core climbs back in to be big again.
+function Combat.removeHusk(e: World.Entity)
+	local w = e.husk
+	e.husk = nil
+	e.reclaimT = 0
+	if w and table.find(walls, w) then
+		destroyWall(w)
+	end
+end
+
+local function spawnHusk(e: World.Entity, x: number, z: number)
+	Combat.removeHusk(e)
+	local size = e.stats.hitRadius * 1.7
+	nextWallId += 1
+	local w: Wall = {
+		id = nextWallId,
+		cx = x,
+		cz = z,
+		ux = 1,
+		uz = 0,
+		halfU = size / 2,
+		halfV = size / 2,
+		hp = e.stats.maxHp * Config.Bomber.husk.hpFraction,
+		part = nil,
+	}
+	local p = Instance.new("Part")
+	p.Name = "BomberHusk"
+	p.Shape = Enum.PartType.Ball
+	p.Anchored = true
+	p.Size = Vector3.one * size
+	p.CFrame = CFrame.new(x, size * 0.3, z)
+	p.Color = Color3.fromRGB(46, 42, 40)
+	p.Material = Enum.Material.CorrodedMetal
+	p:SetAttribute("OwnerId", e.id)
+	local glow = Instance.new("Part")
+	glow.Name = "HuskCracks"
+	glow.Shape = Enum.PartType.Cylinder
+	glow.Anchored = true
+	glow.CanCollide = false
+	glow.CanQuery = false
+	glow.CanTouch = false
+	glow.Size = Vector3.new(0.3, size * 1.02, size * 1.02)
+	glow.CFrame = p.CFrame * CFrame.Angles(0, 0, math.rad(90))
+	glow.Color = Color3.fromRGB(255, 110, 30)
+	glow.Material = Enum.Material.Neon
+	glow.Parent = p
+	local smoke = Instance.new("ParticleEmitter")
+	smoke.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	smoke.Rate = 6
+	smoke.Lifetime = NumberRange.new(1.5, 2.5)
+	smoke.Speed = NumberRange.new(2, 4)
+	smoke.Size = NumberSequence.new(1.5, 4)
+	smoke.Color = ColorSequence.new(Color3.fromRGB(60, 56, 54))
+	smoke.Transparency = NumberSequence.new(0.4, 1)
+	smoke.EmissionDirection = Enum.NormalId.Top
+	smoke.Parent = p
+	-- A ring that fills in while the core reclaims it (the Reclaim attribute, 0-1).
+	local fill = Instance.new("Part")
+	fill.Name = "ReclaimFill"
+	fill.Shape = Enum.PartType.Cylinder
+	fill.Anchored = true
+	fill.CanCollide = false
+	fill.CanQuery = false
+	fill.CanTouch = false
+	fill.Size = Vector3.new(0.12, 0.1, 0.1)
+	fill.CFrame = CFrame.new(x, 0.1, z) * CFrame.Angles(0, 0, math.rad(90))
+	fill.Color = Color3.fromRGB(90, 220, 255)
+	fill.Material = Enum.Material.Neon
+	fill.Transparency = 1
+	fill.Parent = p
+	-- Solid only after a moment, so the core it just popped out of isn't stuck inside.
+	p.CanCollide = false
+	task.delay(1, function()
+		if p.Parent then
+			p.CanCollide = true
+		end
+	end)
+	p.Parent = wallFolder
+	w.part = p
+	table.insert(walls, w)
+	e.husk = w
+	e.reclaimT = 0
+	task.delay(Config.Bomber.husk.life, function()
+		if e.husk == w then
+			Combat.removeHusk(e)
+		elseif table.find(walls, w) then
+			destroyWall(w)
+		end
+	end)
+end
+
 -- Splash and ricochet ---------------------------------------------------------
 
-local function splash(p: Projectile, owner: World.Entity?, x: number, z: number, directId: number?, directCrate: number?, arm: number?)
+local function splash(p: Projectile, owner: World.Entity?, x: number, z: number, directId: number?, directCrate: number?)
 	local r = p.splashRadius :: number
-	local dmg = (p.splashDamage :: number) * (arm or 1)
+	local dmg = p.splashDamage :: number
 	local edge = Config.Combat.SplashEdge
 	Remotes.Effect:FireAllClients("explosion", x, z, r)
 	for _, e in World.entities do
@@ -657,7 +791,16 @@ local function fireGun(e: World.Entity, kind: string, w)
 		if kind == "beam" then
 			fireBeam(e, ox, oz, angle, range, w.damage * s.damageMult * factor)
 		elseif kind == "net" then
-			spawnProjectile(e, ox, oz, angle, w.speed * s.shotSpeedMult, range, 0, w.radius, w.code, { primary = true, net = true, openRadius = w.openRadius, openPerStud = w.openPerStud })
+			local open = w.openRadius * (1 + (st.bmb_mesh or 0) * Config.Bomber.cards.meshWiden) -- Wide Mesh (D84)
+			spawnProjectile(e, ox, oz, angle, w.speed * s.shotSpeedMult, range, 0, w.radius, w.code, { primary = true, net = true, openRadius = open, openPerStud = w.openPerStud })
+		elseif w.pellets then
+			-- Scrap Cannon (D84): a fan of pellets, stronger on marked robots.
+			local n = Stats.pellets(Config, e.build)
+			local bonus = w.markedBonus + (st.bmb_marked or 0) * Config.Bomber.cards.markedScrap
+			for k = 1, n do
+				local a = angle + math.rad((k - (n + 1) / 2) * w.spreadDegrees / math.max(1, n - 1) * 2)
+				spawnProjectile(e, ox, oz, a, w.speed * s.shotSpeedMult, range, w.damage * s.damageMult, w.radius, w.code, { primary = true, markedBonus = bonus })
+			end
 		elseif kind == "rocket" then
 			spawnProjectile(e, ox, oz, angle, w.launchSpeed * s.shotSpeedMult, range, w.damage * s.damageMult * factor, w.radius, w.code, {
 				primary = true,
@@ -666,9 +809,6 @@ local function fireGun(e: World.Entity, kind: string, w)
 				splashDamage = w.splashDamage * s.damageMult * factor,
 				splashRadius = w.splashRadius,
 				knockback = w.knockback,
-				armDistance = w.armDistance, -- rockets arm in flight (D83)
-				unarmed = w.unarmed,
-				range0 = range,
 			})
 		else
 			local code = if (st.mod_ricochet or 0) > 0 then RICOCHET_CODE else w.code
@@ -749,7 +889,7 @@ end
 
 local function primaryOf(e: World.Entity)
 	local c = Chassis.byId[e.chassisId] or Chassis.byId[Chassis.default]
-	return (Upgrades.primaryFor(e.build.stacks) or c.primary) :: Chassis.Primary
+	return (Upgrades.primaryFor(e.build.stacks) or Stats.form({ chassis = c, small = e.build.small }).primary) :: Chassis.Primary
 end
 
 local function firePrimary(e: World.Entity, t: number)
@@ -1127,38 +1267,38 @@ local function stepProjectiles(dt: number, fields: { any })
 		if bestT ~= nil then
 			local hx, hz = x1 + (x2 - x1) * bestT, z1 + (z2 - z1) * bestT
 			endProjectile(i, p, true)
-			-- Bombard rockets hit weaker before they have armed (D83).
-			local arm = if pa.armDistance then Combat2D.armFactor(pa.range0 - p.remaining + step * bestT, pa.armDistance, pa.unarmed) else 1
 			if hitBody and p.net then
 				local shielded = t < hitBody.e.shieldUntil or hitBody.e.god
 				if not shielded and not (Arena.isArena() and hitBody.e.player and owner and owner.player) then -- co-op arena: no nets on players
-					Combat.applyNet(hitBody.e, hx, hz)
+					Combat.applyNet(hitBody.e, hx, hz, owner)
 				end
 			elseif hitBody then
-				Combat.damage(hitBody.e, p.damage * arm, owner, false, hx, hz)
+				-- Scrap Cannon pellets hit marked robots harder (D84).
+				local bonus = if pa.markedBonus and t < hitBody.e.markedUntil then 1 + pa.markedBonus else 1
+				Combat.damage(hitBody.e, p.damage * bonus, owner, false, hx, hz)
 				if p.splashRadius then
-					splash(p, owner, hx, hz, hitBody.e.id, nil, arm)
+					splash(p, owner, hx, hz, hitBody.e.id, nil)
 				end
 				if owner then
 					ricochet(p, owner, hx, hz, hitBody.e.id, nil)
 				end
 			elseif hitCrate then
 				if p.damage > 0 then -- Bomber nets just stop on crates
-					Pickups.damageCrate(hitCrate, p.damage * arm, owner)
+					Pickups.damageCrate(hitCrate, p.damage, owner)
 				end
 				if p.splashRadius then
-					splash(p, owner, hx, hz, nil, hitCrate.id, arm)
+					splash(p, owner, hx, hz, nil, hitCrate.id)
 				end
 				if owner then
 					ricochet(p, owner, hx, hz, nil, hitCrate.id)
 				end
 			elseif hitWall then
-				damageWall(hitWall, p.damage * arm)
+				damageWall(hitWall, p.damage)
 				if p.splashRadius then
-					splash(p, owner, hx, hz, nil, nil, arm)
+					splash(p, owner, hx, hz, nil, nil)
 				end
 			elseif wallT ~= nil and p.splashRadius then
-				splash(p, owner, hx, hz, nil, nil, arm)
+				splash(p, owner, hx, hz, nil, nil)
 			end
 		else
 			p.x, p.z = x2, z2
@@ -1296,46 +1436,87 @@ local function useSkill(e: World.Entity)
 		e.skillReadyAt = t + S.cooldown + S.cooldownPerRank * (rank - 1)
 		World.hooks.markDirty(e)
 	elseif skill == "skl_bomb" then
-		if e.build.small or t < e.skillReadyAt then
-			return -- no bombs until healed back to big form
+		if t < e.skillReadyAt then
+			return
+		end
+		local B = Config.Bomber
+		if e.build.small then
+			-- The core's Space is Boost (D84): a short dash, like skl_dash.
+			if t - e.dashGrantAt < Config.AntiCheat.DashWindow then
+				return
+			end
+			e.skillReadyAt = t + B.boost.cooldown
+			e.dashGrantAt = t
+			World.hooks.markDirty(e)
+			return
 		end
 		local S = Config.Skills.skl_bomb
 		local rank = e.build.skillRank
 		local x, z = World.position(e)
-		-- The blast fills the ring drawn around the Bomber (D80).
+		-- The blast fills the ring drawn around the Bomber (D80), Shaped Charge included.
 		local c = Chassis.byId[e.chassisId] or Chassis.byId[Chassis.default]
 		local radius = Stats.attackRange(Config, Upgrades.primaryFor(e.build.stacks) or c.primary, e.stats, e.build)
-		local damage = S.damage * (1 + S.damagePerRank * (rank - 1)) * e.stats.damageMult
-		-- The fuse (D83): the Bomber glows and beeps for S.fuse s first, so robots nearby
-		-- can run. It blasts wherever it is when the fuse runs out; dead Bombers don't.
-		e.skillReadyAt = t + S.fuse + S.cooldown
-		Remotes.Effect:FireAllClients("fuse", x, z, radius, S.fuse, 0, e.id)
+		-- The fuse (D83): the Bomber glows and beeps first, so robots nearby can run. It
+		-- blasts wherever it is when the fuse runs out; dead Bombers don't.
+		local fuse = if (e.build.stacks.bmb_hotfuse or 0) > 0 then B.cards.hotFuse else S.fuse
+		e.skillReadyAt = t + fuse + S.cooldown
+		Remotes.Effect:FireAllClients("fuse", x, z, radius, fuse, 0, e.id)
 		local gen = e.generation
-		task.delay(S.fuse, function()
+		task.delay(fuse, function()
 			if not e.alive or e.generation ~= gen or e.build.small then
 				return
 			end
 			local bx, bz = World.position(e)
+			local tNow = now()
+			-- Damage from the Pressure stored (D84), read when it goes off.
+			local damage = Stats.bombDamage(Config, e.pressure, rank, e.stats.damageMult)
 			Remotes.Effect:FireAllClients("detonation", bx, bz, radius)
 			for _, tg in targets(e.id, true) do
 				local dist = math.sqrt((tg.x - bx) ^ 2 + (tg.z - bz) ^ 2)
 				if dist <= radius + tg.r then
 					local falloff = Combat2D.splashFactor(math.max(0, dist - tg.r), radius, S.edge)
-					if tg.e then
-						Combat.damage(tg.e, damage * falloff, e, true, tg.x, tg.z)
-						knock(tg.e, bx, bz, S.knockback * falloff)
+					local v = tg.e
+					if v then
+						local hit = damage * falloff
+						local marked = tNow < v.markedUntil
+						if v.isBoss then
+							hit *= B.blast.bossFactor -- bosses resist it and are never knocked down
+						elseif marked then
+							hit *= 1 + B.blast.markedBonus
+						end
+						Combat.damage(v, hit, e, true, tg.x, tg.z)
+						knock(v, bx, bz, S.knockback * falloff)
+						if marked and not v.isBoss and v.alive then
+							-- Knocked down: can't drive or attack for a moment.
+							v.stunnedUntil = math.max(v.stunnedUntil, tNow + B.blast.knockdown)
+							v.rootedUntil = math.max(v.rootedUntil, tNow + B.blast.knockdown)
+							local vgen = v.generation
+							if v.model then
+								v.model:SetAttribute("Flipped", true)
+							end
+							task.delay(B.blast.knockdown, function()
+								if v.generation == vgen and v.model and now() >= v.stunnedUntil then
+									v.model:SetAttribute("Flipped", false)
+								end
+							end)
+						end
 					elseif tg.crate then
 						Pickups.damageCrate(tg.crate, damage * falloff, e)
 					end
 				end
 			end
-			-- The bombs are spent: 25% HP (if it had more) and the small, fast form.
-			e.hp = math.min(e.hp, e.stats.maxHp * Config.Bomber.hpAfter)
+			-- The shell is spent: it stays behind as the husk, and the core pops out.
+			setPressure(e, 0)
+			spawnHusk(e, bx, bz)
+			e.hp = math.min(e.hp, e.stats.maxHp * B.hpAfter)
 			e.armor = 0
 			syncHp(e)
 			syncArmor(e)
-			e.skillReadyAt = now() + S.cooldown
 			World.hooks.setSmall(e, true)
+			e.skillReadyAt = now() + B.boost.cooldown * 0.5
+			-- The core pops out of the smoke, away from the husk.
+			knock(e, bx + math.cos(e.aim), bz + math.sin(e.aim), 8)
+			World.hooks.markDirty(e)
 		end)
 	elseif skill == "skl_nullfield" then
 		if t < e.skillReadyAt then
@@ -1362,14 +1543,72 @@ end
 
 -- Armor regen, Regen Pod healing, Armor Pod expiry and burn. Health itself
 -- never regenerates (D33), except the small Bomber (D80).
-local function tickSustain(e: World.Entity, t: number, dt: number)
-	if e.build.small and e.hp > 0 and e.hp < e.stats.maxHp then
-		-- The small Bomber heals itself, the one exception to D33 (D80).
-		e.hp = math.min(e.stats.maxHp, e.hp + e.stats.maxHp * Config.Bomber.smallRegenPerSecond * dt)
+-- The core becomes the shell again (D84): reclaimed husk or healed to rebuildAt.
+local function rebuildShell(e: World.Entity, reclaimed: boolean)
+	local B = Config.Bomber
+	Combat.removeHusk(e)
+	World.hooks.setSmall(e, false)
+	if reclaimed then
+		e.hp = math.max(e.hp, e.stats.maxHp * B.rebuildAt)
+		e.armor = e.stats.maxArmor
+		syncHp(e)
+		syncArmor(e)
+		local x, z = World.position(e)
+		Remotes.Effect:FireAllClients("crate", x, z, 4) -- panels clanking back on
+	end
+	e.skillReadyAt = math.max(e.skillReadyAt, now() + Config.Skills.skl_bomb.cooldown)
+	World.hooks.markDirty(e)
+end
+
+local function tickBomber(e: World.Entity, t: number, dt: number)
+	local B = Config.Bomber
+	if isShell(e) and e.pressure > 0 and t - e.pressureAt > B.pressure.drainDelay then
+		local valve = e.build.stacks.bmb_valve or 0
+		local before = math.floor(e.pressure)
+		e.pressure = math.max(0, e.pressure - B.pressure.drain * (1 - B.cards.valveDrain * math.min(1, valve)) * dt)
+		if math.floor(e.pressure) ~= before and e.model then
+			e.model:SetAttribute("Pressure", math.floor(e.pressure))
+		end
+	end
+	if not e.build.small then
+		return
+	end
+	if e.hp > 0 and e.hp < e.stats.maxHp then
+		-- The core heals itself, the one exception to D33 (D80).
+		e.hp = math.min(e.stats.maxHp, e.hp + e.stats.maxHp * B.smallRegenPerSecond * dt)
 		syncHp(e)
 	end
-	if e.build.small and e.hp >= e.stats.maxHp * Config.Bomber.rebuildAt then
-		World.hooks.setSmall(e, false) -- healed: the bombs are back (D70)
+	if e.hp >= e.stats.maxHp * B.rebuildAt then
+		rebuildShell(e, false) -- healed: the bombs are back (D70)
+		return
+	end
+	-- Reclaim: park on the husk, unhurt, for reclaim.hold s.
+	local w = e.husk
+	if w and not table.find(walls, w) then
+		e.husk, w = nil, nil
+	end
+	if not w then
+		return
+	end
+	local x, z = World.position(e)
+	local close = (x - w.cx) ^ 2 + (z - w.cz) ^ 2 <= (w.halfU + World.hitRadius(e, Config) + B.reclaim.reach) ^ 2
+	local before = e.reclaimT
+	e.reclaimT = if close and t - e.lastHitAt > 0.2 then e.reclaimT + dt else 0
+	local fill = w.part and w.part:FindFirstChild("ReclaimFill") :: Part?
+	local step = math.floor(e.reclaimT / B.reclaim.hold * 10) / 10
+	if fill and step ~= math.floor(before / B.reclaim.hold * 10) / 10 then
+		local r = (w.halfU + 2) * 2 * step
+		fill.Size = Vector3.new(0.12, math.max(0.1, r), math.max(0.1, r))
+		fill.Transparency = if step > 0 then 0.35 else 1
+	end
+	if e.reclaimT >= B.reclaim.hold then
+		rebuildShell(e, true)
+	end
+end
+
+local function tickSustain(e: World.Entity, t: number, dt: number)
+	if e.chassisId == "bomber" then
+		tickBomber(e, t, dt)
 	end
 	local maxGuard = guardMax(e)
 	if maxGuard > 0 and e.guardHp < maxGuard and t - e.guardHitAt >= Config.Weapons.shieldgen.regenDelay then
@@ -1497,7 +1736,14 @@ function Combat.init()
 						e.model:SetAttribute("Netted", false)
 					end
 				end
-				local netted = if e.netUntil > 0 then Config.Weapons.netgun.netSlow else 1
+				if e.markedUntil > 0 and t >= e.markedUntil then
+					e.markedUntil = 0
+					if e.model then
+						e.model:SetAttribute("Marked", false)
+					end
+				end
+				local N = Config.Weapons.netgun
+				local netted = if e.netUntil > 0 then (if e.isBoss then N.bossSlow else N.netSlow) else 1
 				local slow = if t < e.rootedUntil then 0 else math.min(netted, Combat2D.fieldFactor(x, z, e.id, fields, Config.Skills.skl_nullfield.robotSlow))
 				-- Lava (Q3): burns at lava.dps and slows while inside, then a short burn after.
 				local L = Config.Maps.lava

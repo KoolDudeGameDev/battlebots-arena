@@ -34,6 +34,7 @@ local LOOKS = {
 	[5] = { size = Vector3.new(0.3, 0.3, 4.5), color = Color3.fromRGB(90, 230, 255), trail = 0.15, sound = "Railgun" }, -- railgun
 	[6] = { size = Vector3.new(3.0, 0.3, 1.2), color = Color3.fromRGB(170, 140, 90), sound = "NetLaunch" }, -- Bomber net (grows as it opens)
 	[7] = { size = Vector3.new(1.5, 1.5, 4.8), color = Color3.fromRGB(235, 232, 220), rocket = true, sound = "RocketLaunch" }, -- Bombard rockets, doubled (D80)
+	[8] = { size = Vector3.new(0.3, 0.3, 0.9), color = Color3.fromRGB(255, 190, 80), trail = 0.05, sound = "Gatling" }, -- Bomber core's Scrap Cannon pellets (D84)
 }
 -- Shots fly level at the height they leave the gun (D82: they used to dip to a fixed
 -- plane, which read as curving). A mount's shot starts at that mount's muzzle and
@@ -186,7 +187,7 @@ end
 
 -- What a shot that the server ended (it hit a robot or crate) looks like (D75).
 -- Rockets explode and nets land through their own server effects.
-local HIT_STYLE = { [1] = "robot", [2] = "robot", [4] = "robot", [5] = "robot" }
+local HIT_STYLE = { [1] = "robot", [2] = "robot", [4] = "robot", [5] = "robot", [8] = "robot" }
 
 -- A shot hitting cover: chips, dust or leaves, and the sound of what it is made of.
 local COVER_SOUND: { [string]: string } = { stone = "Rubble", robot = "MetalHit" } -- wood: the leaves and chips are enough

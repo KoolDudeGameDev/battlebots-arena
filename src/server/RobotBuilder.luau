@@ -597,6 +597,20 @@ local function buildPrimary(ctx: Ctx, turret: BasePart, chassisId: string, build
 		return
 	end
 
+	if chassisId == "bomber" and build.small then
+		-- The core's Scrap Cannon (D84): a stubby cluster of short barrels (one per pellet)
+		-- fed from a scrap hopper.
+		local gun = gunFrame(ctx, turret, chassisId, Vector3.new(0, 0.2, -0.3), 0)
+		attach(ctx, gun, "Hopper", Vector3.new(0.9, 0.6, 0.8), CFrame.new(0, 0.15, 0.2), HAZARD, M.CorrodedMetal)
+		local n = Stats.pellets(Config, build)
+		for i = 1, n do
+			local a = (i - 1) / n * math.pi * 2
+			attach(ctx, gun, "ScrapBarrel", Vector3.new(0.9, 0.24, 0.24), CFrame.new(math.cos(a) * 0.2, math.sin(a) * 0.2, -0.55) * AXIS_Z, DARK, M.Metal, SHAPE.Cylinder)
+		end
+		attach(ctx, gun, "ScrapMuzzle", Vector3.new(0.12, 0.7, 0.7), CFrame.new(0, 0, -1.0) * AXIS_Z, STEEL, M.Metal, SHAPE.Cylinder)
+		return
+	end
+
 	if chassisId == "bomber" then
 		-- Net mortar: a short, wide tube tilted up, a net bundle in the mouth and four
 		-- weights round the rim that pull the net open in flight.

@@ -249,14 +249,13 @@ local function steerHull(root: BasePart, humanoid: Humanoid, dt: number)
 	root.CFrame = CFrame.lookAt(pos, pos + Vector3.new(math.cos(yaw), 0, math.sin(yaw)))
 end
 
-local function performDash(root: BasePart, scale: number)
+local function performDash(root: BasePart, scale: number, distance: number)
 	local humanoid = (root.Parent :: Model):FindFirstChildOfClass("Humanoid")
 	local dir = if humanoid and humanoid.MoveDirection.Magnitude > 0.1
 		then humanoid.MoveDirection
 		else Vector3.new(math.cos(ClientState.localAim), 0, math.sin(ClientState.localAim))
 	dir = Vector3.new(dir.X, 0, dir.Z).Unit
-	local D = Config.Skills.skl_dash
-	slide(root, dir, D.distance * scale, D.duration)
+	slide(root, dir, distance * scale, Config.Skills.skl_dash.duration)
 end
 
 function InputController.useSkill()
@@ -270,11 +269,14 @@ function InputController.useSkill()
 	end
 	ClientState.localSkillReadyAt = t + (s.skillCooldown or 0)
 	Remotes.UseSkill:FireServer()
-	if s.skill == "skl_dash" then
-		local root = myRoot()
-		if root then
-			local model = root.Parent :: Model
-			performDash(root, model:GetAttribute("VisualScale") or 1)
+	local root = myRoot()
+	local model = root and root.Parent :: Model
+	if root and model then
+		local scale = model:GetAttribute("VisualScale") or 1
+		if s.skill == "skl_dash" then
+			performDash(root, scale, Config.Skills.skl_dash.distance)
+		elseif s.skill == "skl_bomb" and model:GetAttribute("Small") then
+			performDash(root, scale, Config.Bomber.boost.distance) -- the Bomber core's Boost (D84)
 		end
 	end
 end

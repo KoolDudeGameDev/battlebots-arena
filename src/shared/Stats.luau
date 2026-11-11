@@ -57,7 +57,7 @@ function Stats.compute(config: any, build: any, level: number): Stats
 end
 
 -- The robot's row with its current form applied: the Bomber's small form
--- overrides speed, size, mass and armor; everything else stays.
+-- overrides speed, size, mass, armor and the primary weapon; everything else stays.
 function Stats.form(build: any): any
 	local c = build.chassis or {}
 	if not (build.small and c.small) then
@@ -68,6 +68,19 @@ function Stats.form(build: any): any
 		out[k] = v
 	end
 	return out
+end
+
+-- The Bomber's blast at its centre (D84): from blast.min at 0 Pressure to blast.max at
+-- 100, then Detonate ranks and damage stacks.
+function Stats.bombDamage(config: any, pressure: number, rank: number, damageMult: number): number
+	local B = config.Bomber.blast
+	local p = math.clamp(pressure, 0, 100) / 100
+	return (B.min + (B.max - B.min) * p) * (1 + config.Skills.skl_bomb.damagePerRank * (rank - 1)) * damageMult
+end
+
+-- Pellets per Scrap Cannon burst: the base plus one per Shrapnel card (D84).
+function Stats.pellets(config: any, build: any): number
+	return config.Weapons.scrapgun.pellets + (build.stacks.bmb_shrapnel or 0)
 end
 
 -- Body and hitbox size multiplier for the robot type and form.
@@ -112,8 +125,12 @@ function Stats.attackRange(config: any, primary: any, stats: Stats, build: any):
 	end
 	local spread = (build.stacks.mod_spread or 0) > 0 and primary.kind ~= "cone"
 	local reach = (1.2 + config.Robot.BarrelLength) * stats.scale
-	return w.range * stats.rangeMult * (if spread then config.Barrels.spreadRange else 1)
+	local range = w.range * stats.rangeMult * (if spread then config.Barrels.spreadRange else 1)
 		+ (if primary.kind == "cone" then stats.hitRadius else reach)
+	if primary.kind == "net" then -- the Bomber's ring is its blast: Shaped Charge widens it (D84)
+		range *= 1 + (build.stacks.bmb_shaped or 0) * config.Bomber.cards.shapedRadius
+	end
+	return range
 end
 
 -- Damage per bullet for n barrels, before global stats.

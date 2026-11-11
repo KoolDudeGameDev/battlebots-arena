@@ -853,11 +853,14 @@ local function perFrame()
 	if s then
 		local ready = math.max(s.skillReadyAt or 0, ClientState.localSkillReadyAt)
 		local remaining = math.max(0, ready - t)
-		local name = skillName(s.skill)
+		local name = s.skillAlias or skillName(s.skill)
 		local cd = if s.skill and remaining > 0 then string.format("  (%.1fs)", remaining) else ""
-		skillLabel.Text = "SPACE · " .. (if s.skillNote then s.skillNote else name .. cd)
+		-- The Bomber's shell shows its Pressure: the blast grows with it (D84).
+		local pressure = character and not s.skillAlias and character:GetAttribute("Chassis") == "bomber" and character:GetAttribute("Pressure")
+		local extra = if type(pressure) == "number" then string.format("  · Pressure %d%%", pressure) else ""
+		skillLabel.Text = "SPACE · " .. name .. cd .. extra
 		if skillButton then
-			skillButton.Text = if s.skillNote then "HEAL" elseif s.skill then (if remaining > 0 then string.format("%.1f", remaining) else name) else "SKILL"
+			skillButton.Text = if s.skill then (if remaining > 0 then string.format("%.1f", remaining) else name) else "SKILL"
 			skillButton.BackgroundTransparency = if s.skill and remaining <= 0 then 0 else 0.5
 		end
 	end
@@ -955,10 +958,12 @@ function Hud.init(aimTouchActive)
 		tray.Visible = false
 		collapsed.Visible = false
 		deathTitle.Text = "DESTROYED"
-		deathInfo.Text = if info.keepsLevel
-			then string.format("by %s\nYou keep Lv %d · back in the fight in a moment", info.killerName, info.level)
+		deathInfo.Text = if info.untilFightEnds
+			then string.format("by %s\nYou keep Lv %d · you're out until the fight ends", info.killerName, info.level)
+			elseif info.keepsLevel then string.format("by %s\nYou keep Lv %d · back in the fight in a moment", info.killerName, info.level)
 			else string.format("by %s (Lv %d)\nYou reached Lv %d · Score %s", info.killerName, info.killerLevel, info.level, fmt(info.score))
 		deathRespawnAt = info.respawnAt
+		deathTimer.Text = if info.untilFightEnds then "Watching the fight..." else "" -- D85
 	end)
 	-- Debug command output and other system lines appear in chat.
 	Remotes.Notice.OnClientEvent:Connect(function(message)

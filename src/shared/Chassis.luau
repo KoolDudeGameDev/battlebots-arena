@@ -22,7 +22,7 @@ export type Chassis = {
 	mass: number?, -- knockback resistance (default 1)
 	size: number?, -- hitbox radius multiplier (default 1): heavier robots are bigger targets
 	firingSpeed: number?, -- walk speed multiplier while firing (recoil, default 1)
-	small: { speed: number, size: number, mass: number, armor: number }?, -- Bomber's form after detonating (D70)
+	small: { speed: number, size: number, mass: number, armor: number, primary: Primary? }?, -- Bomber's form after detonating (D70, D84)
 	skill: string?, -- a built-in skill the robot starts with and can't swap (Bomber's bomb)
 	primary: Primary?,
 	tags: { string }, -- gate upgrades, e.g. Ricochet needs "projectile_primary"
@@ -76,7 +76,7 @@ local list: { Chassis } = {
 		class = "C",
 		name = "Bombard",
 		price = 600,
-		hp = 120, -- D83: 100 -> 120; it is slow, so it has to survive a little longer when caught
+		hp = 150, -- D85: 100 -> 150 (Gregory's full buff); it is slow, so it has to survive being caught
 		speed = 19,
 		firingSpeed = 0.6,
 		mass = 1.1,
@@ -97,7 +97,8 @@ local list: { Chassis } = {
 		armor = 60,
 		mass = 2.5,
 		size = 1.35,
-		small = { speed = 34, size = 0.7, mass = 0.7, armor = 0 },
+		-- The core (D84): fast and small, no armor, and a Scrap Cannon instead of the net.
+		small = { speed = 34, size = 0.7, mass = 0.7, armor = 0, primary = { kind = "projectile", weapon = "scrapgun" } },
 		skill = "skl_bomb",
 		primary = { kind = "net", weapon = "netgun" },
 		tags = { "net_primary", "special_mounts", "bomber" },

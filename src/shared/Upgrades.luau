@@ -67,6 +67,14 @@ local list: { Def } = {
 	{ id = "var_hammer", name = "Sledgehammer", category = "Modifier", rarity = "Epic", weight = 2, max = 1, minLevel = 10, tags = { "offense", "primary" }, text = "Your saw becomes a hammer: overhead smashes that hit an area in front and send robots flying", requiresTag = "melee_primary", excludes = { "var_axe" }, primary = { kind = "melee", weapon = "hammer" } },
 	{ id = "mod_scavenger", name = "Scavenger", category = "Modifier", rarity = "Rare", weight = 4, max = 1, minLevel = 1, tags = { "sustain", "economy" }, text = "Orbs repair your robot" },
 
+	-- Bomber-only cards (D84, 11-bomber-redesign.md): shell, blast and core.
+	{ id = "bmb_mesh", name = "Wide Mesh", category = "Stat", rarity = "Common", weight = 8, max = 3, minLevel = 1, tags = { "control" }, text = "Nets open 25% wider", requiresTag = "bomber" },
+	{ id = "bmb_valve", name = "Pressure Valve", category = "Modifier", rarity = "Rare", weight = 5, max = 2, minLevel = 2, tags = { "offense" }, text = "Pressure drains 50% slower; +5 Pressure per robot netted", requiresTag = "bomber" },
+	{ id = "bmb_shaped", name = "Shaped Charge", category = "Modifier", rarity = "Rare", weight = 5, max = 3, minLevel = 4, tags = { "offense" }, text = "+12% blast radius", requiresTag = "bomber" },
+	{ id = "bmb_hotfuse", name = "Hot Fuse", category = "Modifier", rarity = "Epic", weight = 2, max = 1, minLevel = 10, tags = { "offense" }, text = "Detonate's fuse: 0.8 s -> 0.55 s", requiresTag = "bomber" },
+	{ id = "bmb_shrapnel", name = "Shrapnel", category = "Modifier", rarity = "Rare", weight = 4, max = 2, minLevel = 4, tags = { "offense" }, text = "+1 Scrap Cannon pellet (small form)", requiresTag = "bomber" },
+	{ id = "bmb_marked", name = "Marked for Demolition", category = "Modifier", rarity = "Rare", weight = 4, max = 2, minLevel = 6, tags = { "offense" }, text = "Marks last 3 s longer; Scrap Cannon +25% on marked robots", requiresTag = "bomber" },
+
 	-- Used only when the normal pool cannot fill three cards. Never capped.
 	-- Health only comes from the map (D33), so this drops a health pack rather than healing.
 	{ id = "fb_supply", name = "Supply Drop", category = "Fallback", rarity = "Fallback", weight = 1, max = math.huge, minLevel = 1, tags = {}, text = "Drops a health pack beside you" },

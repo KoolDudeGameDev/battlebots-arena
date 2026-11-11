@@ -1,6 +1,7 @@
--- Bomber (D70): a huge, tough robot that only fires nets (they slow what they hit),
--- detonates with Space, drops to 25% HP and becomes a small fast robot until it
--- heals back up.
+-- Bomber (D70, redesigned in D84, 11-bomber-redesign.md): a huge shell that nets and
+-- marks robots and builds Pressure from the hits it soaks; Space detonates (stronger
+-- with more Pressure) and leaves the shell as a husk; the small core fights with a
+-- Scrap Cannon and Boost until it reclaims the husk or heals.
 local Chassis = require("../src/shared/Chassis")
 local Config = require("../src/shared/Config")
 local Stats = require("../src/shared/Stats")
@@ -12,8 +13,8 @@ local function near(a: number, b: number): boolean
 	return math.abs(a - b) < 1e-6
 end
 
-local function stats(id: string, small: boolean?)
-	return Stats.compute(Config, { stacks = {}, chassis = Chassis.byId[id], small = small }, 0)
+local function stats(id: string, small: boolean?, stacks: { [string]: number }?)
+	return Stats.compute(Config, { stacks = stacks or {}, chassis = Chassis.byId[id], small = small }, 0)
 end
 
 local function offered(chassisId: string, skill: string?): { [string]: boolean }
@@ -27,7 +28,7 @@ local function offered(chassisId: string, skill: string?): { [string]: boolean }
 end
 
 return function(test)
-	test("big form is the toughest robot and never shoots damage", function()
+	test("big form is the toughest robot and its gun never deals damage", function()
 		local big = stats("bomber")
 		for _, c in Chassis.list do
 			if not c.comingSoon and c.id ~= "bomber" then
@@ -36,15 +37,55 @@ return function(test)
 			end
 		end
 		local p = Chassis.byId.bomber.primary :: Chassis.Primary
-		assert(p.kind == "net" and Config.Weapons[p.weapon].netDuration > 0)
+		assert(p.kind == "net" and Config.Weapons[p.weapon].damage == 0)
 	end)
 
-	test("small form: same max HP, much faster, smaller, no built-in armor", function()
+	test("nets (D84): a short slow, then immunity, so the slow is up less than half the time", function()
+		local N = Config.Weapons.netgun
+		assert(N.netSlow == 0.55 and N.netDuration == 1.6 and N.immunity == 2)
+		assert(N.markDuration == 6 and N.bossSlow == 0.8)
+		local uptime = N.netDuration / (N.netDuration + N.immunity)
+		assert(uptime < 0.5, "slowed " .. uptime)
+	end)
+
+	test("small form: same max HP, much faster, smaller, no armor, and a Scrap Cannon", function()
 		local big, small = stats("bomber"), stats("bomber", true)
 		assert(small.maxHp == big.maxHp, "HP percentage carries over")
 		assert(small.speed >= big.speed * 1.4, "small form is fast")
 		assert(small.hitRadius < big.hitRadius and small.maxArmor == 0)
-		assert(Stats.bodySize({ chassis = Chassis.byId.bomber, small = true }) < Stats.bodySize({ chassis = Chassis.byId.bomber }))
+		local form = Stats.form({ chassis = Chassis.byId.bomber, small = true })
+		assert(form.primary.kind == "projectile" and form.primary.weapon == "scrapgun", "the core shoots")
+		assert(Stats.form({ chassis = Chassis.byId.bomber }).primary.kind == "net", "the shell nets")
+		local W = Config.Weapons.scrapgun
+		assert(W.range == 16 and W.pellets == 3 and W.damage == 7 and W.fireRate == 1.6)
+	end)
+
+	test("Scrap Cannon: below the Rookie's damage unless the target is marked", function()
+		local W = Config.Weapons.scrapgun
+		local dps = W.pellets * W.damage * W.fireRate
+		local rookie = Config.Weapons.blaster.damage * Config.Weapons.blaster.fireRate
+		assert(dps < rookie, "plain " .. dps)
+		assert(dps * (1 + W.markedBonus) > rookie, "marked " .. dps * (1 + W.markedBonus))
+		assert(Stats.pellets(Config, { stacks = {} }) == 3)
+		assert(Stats.pellets(Config, { stacks = { bmb_shrapnel = 2 } }) == 5, "Shrapnel adds pellets")
+	end)
+
+	test("blast damage grows with Pressure: 150 empty, 400 full, ranks add 25%", function()
+		assert(near(Stats.bombDamage(Config, 0, 1, 1), 150))
+		assert(near(Stats.bombDamage(Config, 100, 1, 1), 400))
+		assert(near(Stats.bombDamage(Config, 50, 1, 1), 275))
+		assert(near(Stats.bombDamage(Config, 250, 1, 1), 400), "Pressure caps at 100")
+		assert(near(Stats.bombDamage(Config, 100, 2, 1), 500), "rank 2")
+		assert(near(Stats.bombDamage(Config, 100, 1, 1.5), 600), "damage stacks")
+	end)
+
+	test("the blast is exactly the drawn ring, and Shaped Charge widens both", function()
+		local S = Config.Skills.skl_bomb
+		local ring = Stats.attackRange(Config, Chassis.byId.bomber.primary, stats("bomber"), { stacks = {} })
+		assert(near(ring, Config.Weapons.netgun.range + 1.2 + Config.Robot.BarrelLength), "ring " .. ring)
+		local wide = Stats.attackRange(Config, Chassis.byId.bomber.primary, stats("bomber"), { stacks = { bmb_shaped = 2 } })
+		assert(near(wide, ring * 1.24), "Shaped Charge x2: " .. wide)
+		assert(S.edge == 0.5 and near(Combat2D.splashFactor(ring, ring, S.edge), 0.5), "half damage at the ring")
 	end)
 
 	test("the bomb is the Bomber's own skill: never replaced, only ranked up", function()
@@ -55,29 +96,25 @@ return function(test)
 		assert(Chassis.byId.bomber.skill == "skl_bomb")
 	end)
 
+	test("six Bomber-only cards (D84), offered to nobody else", function()
+		local b, r = offered("bomber", "skl_bomb"), offered("rookie", nil)
+		for _, id in { "bmb_mesh", "bmb_valve", "bmb_shaped", "bmb_hotfuse", "bmb_shrapnel", "bmb_marked" } do
+			assert(Upgrades.byId[id], id .. " exists")
+			assert(b[id], id .. " offered to the Bomber")
+			assert(not r[id], id .. " offered to the Rookie")
+		end
+	end)
+
 	test("Bomber uses the special attachment pool", function()
 		local b = offered("bomber", "skl_bomb")
 		assert(b.wpn_traps and b.wpn_shieldgen and not b.wpn_gatling)
 	end)
 
-	test("detonating leaves 25% HP and healing past the rebuild line makes it big again", function()
+	test("detonating leaves 35% HP; reclaiming the husk or healing to 60% makes it big again", function()
 		local B = Config.Bomber
-		assert(B.hpAfter == 0.25 and B.rebuildAt > B.hpAfter and B.rebuildAt <= 1)
-	end)
-
-	test("the bomb blast is exactly the drawn ring: 300 at the centre, 150 at the edge (D80)", function()
-		local S = Config.Skills.skl_bomb
-		local ring = Stats.attackRange(Config, Chassis.byId.bomber.primary, stats("bomber"), { stacks = {} })
-		assert(near(ring, Config.Weapons.netgun.range + 1.2 + Config.Robot.BarrelLength), "ring " .. ring)
-		assert(S.damage == 300 and S.edge == 0.5, "damage and edge")
-		assert(S.radius == nil and S.radiusPerRank == nil, "radius comes from the ring, not the skill")
-		assert(near(S.damage * Combat2D.splashFactor(ring, ring, S.edge), 150))
-	end)
-
-	test("the small form heals 1% of max HP a second: back to big in about 35 s (D80)", function()
-		local B = Config.Bomber
-		assert(B.smallRegenPerSecond == 0.01, "1% a second")
+		assert(B.hpAfter == 0.35 and B.rebuildAt == 0.6)
+		assert(B.reclaim.hold == 1.5 and B.husk.life == 25 and B.husk.hpFraction == 0.25)
 		local secs = (B.rebuildAt - B.hpAfter) / B.smallRegenPerSecond
-		assert(secs >= 33 and secs <= 37, "rebuild takes " .. secs .. " s")
+		assert(secs >= 24 and secs <= 26, "passive rebuild takes " .. secs .. " s")
 	end)
 end

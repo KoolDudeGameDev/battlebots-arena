@@ -606,6 +606,7 @@ end
 
 local swapping = false
 local nextPadAt = 0
+local wipedOut = false -- everyone in the arena fell: the boss won (D85)
 
 -- Workspace attributes the HUD reads: the phase and when it ends (server time).
 function Bosses.publish()
@@ -626,6 +627,7 @@ local function swapTo(name: string, after: (() -> ())?, subtitle: string?)
 		Arena.load(name)
 		Pickups.setMode(if Arena.isArena() then "arena" else "overworld")
 		Match.placeEveryone(rng)
+		Match.reviveFallen() -- those who fell to the boss rejoin on the new map (D85)
 		nextPadAt = 0
 		swapping = false
 		if after then
@@ -647,9 +649,12 @@ local function onEvent(ev: string)
 	elseif ev == "escape" then
 		local a = active
 		if a then
-			announce(`{a.def.name} got bored and left. No reward this time.`)
+			if not wipedOut then
+				announce(`{a.def.name} got bored and left. No reward this time.`)
+			end
 			removeBoss(a)
 		end
+		wipedOut = false
 		swapTo("grassland", nil, "Back to the overworld")
 	elseif ev == "biome" then
 		swapTo(flow.map, function()
@@ -712,6 +717,15 @@ function Bosses.init()
 			local t = now()
 			tickPads(t)
 			if not swapping then
+				-- Everyone in the arena is down (D85): the boss wins and everyone goes home.
+				if flow.phase == "arena" and active and not wipedOut then
+					local down, up = Match.arenaHeadcount()
+					if down > 0 and up == 0 then
+						wipedOut = true
+						announce(`{active.def.name} wiped out everyone in its lair. No reward this time.`)
+						flow = MapFlow.wiped(flow, t)
+					end
+				end
 				local s, ev = MapFlow.tick(Config, flow, t, #Players:GetPlayers(), rng:NextNumber())
 				flow = s
 				if ev then

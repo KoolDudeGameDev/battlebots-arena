@@ -88,6 +88,13 @@ local function newEntity(player: Player?): World.Entity
 		slowFactor = 1,
 		rootedUntil = 0,
 		netUntil = 0,
+		netImmuneUntil = 0,
+		markedUntil = 0,
+		pressure = 0,
+		pressureAt = 0,
+		husk = nil,
+		reclaimT = 0,
+		waitingForArena = false,
 		stunnedUntil = 0,
 		guardHp = 0,
 		guardHitAt = -math.huge,
@@ -158,6 +165,8 @@ local function setupModel(e: World.Entity, model: Model, color: Color3)
 	model:SetAttribute("Shield", false)
 	model:SetAttribute("Field", 0) -- Null Field radius while active
 	model:SetAttribute("Flipped", false) -- Flipper stun (D72)
+	model:SetAttribute("Marked", false) -- marked by a Bomber net (D84)
+	model:SetAttribute("Pressure", if e.chassisId == "bomber" then math.floor(e.pressure) else nil) -- Bomber shell (D84)
 	model:SetAttribute("HP", math.floor(e.hp + 0.5))
 	e.model = model
 	e.root = model.PrimaryPart
@@ -292,6 +301,8 @@ local function spawnPlayer(e: World.Entity, keep: boolean?)
 	e.firing = false
 	e.shieldUntil, e.skillReadyAt = 0, 0
 	e.fieldUntil, e.slowFactor, e.rootedUntil, e.netUntil, e.stunnedUntil = 0, 1, 0, 0, 0
+	e.netImmuneUntil, e.markedUntil, e.pressure, e.reclaimT, e.waitingForArena = 0, 0, 0, 0, false
+	World.hooks.removeHusk(e)
 	e.guardHp, e.guardHitAt = 0, -math.huge
 	e.dashGrantAt, e.lastHitAt, e.lastDamageAt = -math.huge, -math.huge, -math.huge
 	e.lastDamagerId = nil
@@ -516,8 +527,9 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 		return
 	end
 
-	-- Dying in a boss arena (Q2): keep your level and build, lose a quarter of the XP
-	-- toward your next level, drop nothing, and come back in the arena.
+	-- Dying in a boss arena (Q2, D85): keep your level and build, lose a quarter of the XP
+	-- toward your next level, drop nothing, and sit the rest of the fight out: you come
+	-- back when the map changes (Match.reviveFallen).
 	if Arena.isArena() and victim.player then
 		local lost = math.min(victim.xp, math.floor(Config.Maps.arenaDeath.xpLoss * XpCurve.toNext(victim.level)))
 		victim.xp -= lost
@@ -529,11 +541,11 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 			killerLevel = if killer then killer.level else 0,
 			level = victim.level,
 			score = victim.score,
-			respawnAt = now() + Config.Maps.arenaDeath.respawn,
 			keepsLevel = true,
+			untilFightEnds = true,
 		})
+		victim.waitingForArena = true
 		markDirty(victim)
-		respawnLater(victim, Config.Maps.arenaDeath.respawn, true) -- the level was kept at death, even if the fight ended meanwhile
 		return
 	end
 
@@ -558,6 +570,32 @@ function Match.onKill(victim: World.Entity, killer: World.Entity?)
 	markDirty(victim)
 
 	respawnLater(victim, Config.Combat.RespawnDelay)
+end
+
+-- Players who fell in a boss arena come back once the map changes (D85), with the
+-- level they had.
+function Match.reviveFallen()
+	for _, e in World.entities do
+		if e.waitingForArena and e.player then
+			e.waitingForArena = false
+			respawnLater(e, 0, true)
+		end
+	end
+end
+
+-- How many players are out of the boss fight, and how many are still in it.
+function Match.arenaHeadcount(): (number, number)
+	local down, up = 0, 0
+	for _, e in World.entities do
+		if e.player then
+			if e.waitingForArena then
+				down += 1
+			elseif e.alive then
+				up += 1
+			end
+		end
+	end
+	return down, up
 end
 
 -- A map swap (D81): every living robot (players and dummies) moves to a spawn point
@@ -681,6 +719,9 @@ end
 -- HUD state -------------------------------------------------------------------
 
 local function skillCooldown(e: World.Entity): number
+	if e.build.small then
+		return Config.Bomber.boost.cooldown -- the Bomber core's Boost (D84)
+	end
 	local skill = e.build.skill
 	local def = skill and Config.Skills[skill]
 	if def then
@@ -728,7 +769,7 @@ local function pushState(e: World.Entity)
 		skillRank = e.build.skillRank,
 		skillReadyAt = e.skillReadyAt,
 		skillCooldown = skillCooldown(e),
-		skillNote = if e.build.small then `Heal to {math.floor(Config.Bomber.rebuildAt * 100)}%` else nil,
+		skillAlias = if e.build.small then "Boost" else nil, -- the Bomber core's Space (D84)
 		offer = offer,
 		pending = e.pendingOffers,
 		mounts = e.build.mounts,
