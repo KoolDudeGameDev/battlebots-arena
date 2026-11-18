@@ -46,3 +46,13 @@ _Avoid_: Shield, bubble
 Damage over time after being set alight by flames, a boss or lava, credited to whoever
 set it.
 _Avoid_: Fire damage, DoT
+
+### Weapons
+
+**Main weapon**:
+The weapon a robot is built around and fires with the trigger (blaster, rockets, flamethrower, saw, net gun, the Bomber core's scrap cannon).
+_Avoid_: Primary, gun
+
+**Mount**:
+An extra weapon from an upgrade card, fixed on the hull, that works on its own: guns pick a target in front, melee mounts hit what they touch, traps drop as you drive, and the Shield Generator only guards.
+_Avoid_: Attachment, turret, secondary

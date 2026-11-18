@@ -14,6 +14,7 @@ local Remotes = require(Shared.Remotes)
 local Combat2D = require(Shared.Combat2D)
 local MapQuery = require(Shared.MapQuery)
 local Condition = require(Shared.Condition)
+local MountFire = require(Shared.MountFire)
 local Stats = require(Shared.Stats)
 local Chassis = require(Shared.Chassis)
 local Upgrades = require(Shared.Upgrades)
@@ -266,15 +267,8 @@ local function targets(selfId: number, crates: boolean): { Target }
 	return out
 end
 
--- Is (tx, tz) within `half` radians either side of `facing`, seen from (x, z)?
-local function inFront(x: number, z: number, facing: number, half: number, tx: number, tz: number): boolean
-	local d = (math.atan2(tz - z, tx - x) - facing + math.pi) % (2 * math.pi) - math.pi
-	return math.abs(d) <= half
-end
-
 -- Nearest target within range of (x, z); robots first, crates only if no robot.
--- With `facing` and `half`, only targets in that arc count (mounted weapons, D82).
-local function nearestTarget(selfId: number, x: number, z: number, range: number, crates: boolean, skipEntity: number?, skipCrate: number?, facing: number?, half: number?): (number?, number?)
+local function nearestTarget(selfId: number, x: number, z: number, range: number, crates: boolean, skipEntity: number?, skipCrate: number?): (number?, number?)
 	local best: Target? = nil
 	local bestD = math.huge
 	for pass = 1, 2 do
@@ -287,9 +281,6 @@ local function nearestTarget(selfId: number, x: number, z: number, range: number
 				continue
 			end
 			if (tg.e and tg.e.id == skipEntity) or (tg.crate and tg.crate.id == skipCrate) then
-				continue
-			end
-			if facing and half and not inFront(x, z, facing, half, tg.x, tg.z) then
 				continue
 			end
 			local d = math.sqrt((tg.x - x) ^ 2 + (tg.z - z) ^ 2) - tg.r
@@ -894,78 +885,6 @@ local function firePrimary(e: World.Entity, t: number)
 	end
 end
 
--- Shock Coil: hits the nearest target in the mounts' arc, then jumps to the next
--- nearest ones (any direction).
-local function fireShock(e: World.Entity, def, damage: number, rank: number, facing: number)
-	local x, z = World.position(e)
-	local half = math.rad(Config.MountArcDegrees / 2)
-	local range = def.range * e.stats.rangeMult
-	local all = targets(e.id, def.targetsCrates)
-	local hit: { [Target]: boolean } = {}
-	local jumps = def.chains + (if rank >= 3 then 1 else 0) + (if rank >= 5 then 1 else 0)
-	local fromX, fromZ, reach = x, z, range
-	for k = 0, jumps do
-		local best: Target? = nil
-		local bestD = math.huge
-		for _, tg in all do
-			if not hit[tg] and (k > 0 or inFront(x, z, facing, half, tg.x, tg.z)) then
-				local d = math.sqrt((tg.x - fromX) ^ 2 + (tg.z - fromZ) ^ 2) - tg.r
-				if d <= reach and d < bestD then
-					best, bestD = tg, d
-				end
-			end
-		end
-		if not best then
-			break
-		end
-		hit[best] = true
-		local dmg = damage * def.chainFalloff ^ k
-		-- The first bolt names its robot, so clients start it at the coil (D82).
-		Remotes.Effect:FireAllClients("beam", fromX, fromZ, 0, best.x, best.z, if k == 0 then e.id else nil)
-		if best.e then
-			Combat.damage(best.e, dmg, e, false, best.x, best.z)
-		elseif best.crate then
-			Pickups.damageCrate(best.crate, dmg, e)
-		end
-		fromX, fromZ, reach = best.x, best.z, def.chainRange
-	end
-	return next(hit) ~= nil
-end
-
--- Spike Ram: robots in front take damage while you drive into them.
-local function ramHit(e: World.Entity, def, damage: number): boolean
-	if speedFraction(e) < def.minSpeedFraction or not e.root then
-		return false
-	end
-	local x, z = World.position(e)
-	local look = e.root.CFrame.LookVector
-	local facing = math.atan2(look.Z, look.X)
-	local reach = World.hitRadius(e, Config) + def.reach * e.stats.scale
-	local any = false
-	for _, tg in targets(e.id, false) do
-		if tg.e and Combat2D.inArc(x, z, facing, math.rad(35), reach, tg.x, tg.z, tg.r) then
-			Combat.damage(tg.e, damage, e, false, tg.x, tg.z)
-			knock(tg.e, x, z, def.knockback)
-			any = true
-		end
-	end
-	return any
-end
-
--- Side Saw: grinds every enemy robot touching your hitbox, from any side.
-local function sideSaw(e: World.Entity, def, damage: number): boolean
-	local x, z = World.position(e)
-	local reach = World.hitRadius(e, Config) + def.reach * e.stats.scale
-	local any = false
-	for _, tg in targets(e.id, false) do
-		if tg.e and (tg.x - x) ^ 2 + (tg.z - z) ^ 2 <= (reach + tg.r) ^ 2 then
-			Combat.damage(tg.e, damage, e, false, tg.x, tg.z)
-			any = true
-		end
-	end
-	return any
-end
-
 local function removeTrap(i: number)
 	local tr = table.remove(traps, i)
 	if tr and tr.part then
@@ -973,24 +892,9 @@ local function removeTrap(i: number)
 	end
 end
 
--- Spike Traps (D88): while you drive, drop one just behind your rear wheels, so
--- they trail along your tracks. Was: under you, and only with an enemy near, so a
--- player testing alone never saw one.
-local function dropTrap(e: World.Entity, def, damage: number, t: number): boolean
-	local root = e.root
-	if not root then
-		return false
-	end
-	local vel = root.AssemblyLinearVelocity
-	if vel.X * vel.X + vel.Z * vel.Z < def.minSpeed * def.minSpeed then
-		return false
-	end
-	-- Behind the way you're moving, not the way the hull faces: a robot backing away
-	-- while it shoots still leaves the trap in its tracks.
-	local cx, cz = World.position(e)
-	local speed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
-	local behind = World.hitRadius(e, Config) + def.radius * 0.6
-	local x, z = cx - vel.X / speed * behind, cz - vel.Z / speed * behind
+-- Spike Traps (D88): MountFire picks the spot (behind the way you're moving); this
+-- builds the trap there and retires your oldest past maxTraps.
+local function placeTrap(e: World.Entity, def, x: number, z: number, damage: number, t: number)
 	local mine = {}
 	for i, tr in traps do
 		if tr.ownerId == e.id then
@@ -1040,7 +944,6 @@ local function dropTrap(e: World.Entity, def, damage: number, t: number): boolea
 	end
 	p.Parent = trapFolder
 	table.insert(traps, { ownerId = e.id, x = x, z = z, armAt = t + def.armDelay, dieAt = t + def.life, damage = damage, part = p })
-	return true
 end
 
 -- Armed traps hurt and pin the first enemy robot that drives over them.
@@ -1068,21 +971,69 @@ local function tickTraps(t: number)
 	end
 end
 
-local function fireMounts(e: World.Entity, t: number)
-	if e.protectedUntil > t then
-		return
+-- Carries out what a mount did (D92): shots, hits (with any toss), lightning, traps.
+local function runMountAction(e: World.Entity, def, a: MountFire.Action, list: { Target }, damage: number, t: number)
+	if a.kind == "shot" then
+		spawnProjectile(e, a.x :: number, a.z :: number, a.angle :: number, a.speed :: number, a.range :: number, damage, a.radius :: number, a.code :: number, a.opts)
+	elseif a.kind == "hit" then
+		local tg = list[a.target :: number]
+		if tg.e then
+			Combat.damage(tg.e, a.amount :: number, e, false, tg.x, tg.z)
+			if a.knockback then
+				local x, z = World.position(e)
+				knock(tg.e, x, z, a.knockback)
+			end
+		elseif tg.crate then
+			Pickups.damageCrate(tg.crate, a.amount :: number, e)
+		end
+	elseif a.kind == "beam" then
+		-- The first bolt names its robot, so clients start it at the coil (D82).
+		Remotes.Effect:FireAllClients("beam", a.x1, a.z1, 0, a.x2, a.z2, if a.first then e.id else nil)
+	elseif a.kind == "trap" then
+		placeTrap(e, def, a.x :: number, a.z :: number, damage, t)
 	end
+end
+
+-- The robot as MountFire sees it, read fresh for every mount: an earlier mount's
+-- kill can level you up (bigger, faster) within the same tick.
+local function mountRobot(e: World.Entity): MountFire.Robot
 	local s = e.stats
 	local x, z = World.position(e)
 	-- Mounts swivel within the hull's front arc, like the turret (D82), so they only
 	-- shoot what they can visibly point at.
-	local facing = e.aim
+	local facing, vx, vz = e.aim, 0, 0
 	if e.root then
 		local look = e.root.CFrame.LookVector
 		facing = math.atan2(look.Z, look.X)
+		local v = e.root.AssemblyLinearVelocity
+		vx, vz = v.X, v.Z
 	end
-	local half = math.rad(Config.MountArcDegrees / 2)
+	return {
+		x = x,
+		z = z,
+		facing = facing,
+		scale = s.scale,
+		hitRadius = World.hitRadius(e, Config),
+		speedFraction = speedFraction(e),
+		vx = vx,
+		vz = vz,
+		hasRoot = e.root ~= nil,
+		rangeMult = s.rangeMult,
+		shotSpeedMult = s.shotSpeedMult,
+		damageMult = s.damageMult,
+		liveProjectiles = e.liveProjectiles,
+	}
+end
+
+-- Mounts fire on their own timers. What each one does is MountFire's (D92); this
+-- builds its snapshot of the robot and its targets and carries out the result.
+local function fireMounts(e: World.Entity, t: number)
+	if e.protectedUntil > t then
+		return
+	end
+	local arcHalf = math.rad(Config.MountArcDegrees / 2)
 	for _, weaponId in e.build.mounts do
+		local s = e.stats
 		local key = MOUNT_WEAPON[weaponId]
 		local def = key and W[key]
 		-- Passive mounts (Shield Generator) have no damage or fire rate (D72 crash fix).
@@ -1094,55 +1045,28 @@ local function fireMounts(e: World.Entity, t: number)
 		damage *= s.damageMult
 		rate *= s.fireRateMult
 
-		if key == "shock" then
-			if fireShock(e, def, damage, rank, facing) then
-				fireReady(e, weaponId, rate, t)
-			end
-			continue
-		elseif key == "spikeram" then
-			if ramHit(e, def, damage) then
-				fireReady(e, weaponId, rate, t)
-			end
-			continue
-		elseif key == "sidesaw" then
-			if sideSaw(e, def, damage) then
-				fireReady(e, weaponId, rate, t)
-			end
-			continue
-		elseif key == "traps" then
-			if dropTrap(e, def, damage, t) then
-				fireReady(e, weaponId, rate, t)
-			end
-			continue
+		-- A fresh target list for each mount: an earlier mount's hits may have killed.
+		local list = targets(e.id, true)
+		local snapshot: { MountFire.Target } = table.create(#list)
+		for i, tg in list do
+			snapshot[i] = { x = tg.x, z = tg.z, r = tg.r, crate = tg.crate ~= nil }
 		end
-
-		if e.liveProjectiles >= Config.Combat.ProjectileCapPerPlayer then
-			continue
-		end
-		local range = def.range * s.rangeMult
-		local tx, tz = nearestTarget(e.id, x, z, range, def.targetsCrates, nil, nil, facing, half)
-		if not tx or not tz then
-			continue
-		end
-		fireReady(e, weaponId, rate, t)
-		local angle = math.atan2(tz - z, tx - x)
-		local ox, oz = x + math.cos(angle) * 2 * s.scale, z + math.sin(angle) * 2 * s.scale
-		if key == "rocket" then
-			local n = Stats.rocketCount(rank)
-			for k = 1, n do
-				local a = angle + math.rad((k - (n + 1) / 2) * def.spreadDegrees)
-				spawnProjectile(e, ox, oz, a, def.launchSpeed * s.shotSpeedMult, range, damage, def.radius, def.code, {
-					accel = def.accel * s.shotSpeedMult,
-					maxSpeed = def.speed * s.shotSpeedMult,
-					splashDamage = def.splashDamage * s.damageMult * (1 + def.damagePerRank * (rank - 1)),
-					splashRadius = def.splashRadius,
-					knockback = def.knockback,
-				})
+		local fired, actions = MountFire.fire(key, {
+			robot = mountRobot(e),
+			def = def,
+			rank = rank,
+			damage = damage,
+			targets = snapshot,
+			arcHalf = arcHalf,
+			projectileCap = Config.Combat.ProjectileCapPerPlayer,
+			rocketCount = Stats.rocketCount(rank),
+			geom = Combat2D,
+		})
+		if fired then
+			fireReady(e, weaponId, rate, t)
+			for _, a in actions do
+				runMountAction(e, def, a, list, damage, t)
 			end
-		elseif key == "railgun" then
-			spawnProjectile(e, ox, oz, angle, def.speed * s.shotSpeedMult, range, damage, def.radius, def.code, { pierce = true, hitIds = {} })
-		else
-			spawnProjectile(e, ox, oz, angle, def.speed * s.shotSpeedMult, range + 2, damage, def.radius, def.code)
 		end
 	end
 end

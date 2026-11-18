@@ -196,6 +196,7 @@ Config.Weapons = {
 		damage = 15,
 		fireRate = 2,
 		reach = 2.5, -- studs beyond the hitbox, in front
+		arcDegrees = 70, -- the horns' reach is this wide in front (35 each side)
 		damagePerRank = 0.25,
 		minSpeedFraction = 0.3, -- only hurts while you are driving
 		knockback = 18, -- a real toss (D72)
