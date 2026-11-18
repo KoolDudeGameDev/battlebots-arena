@@ -16,6 +16,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 local Combat2D = require(Shared.Combat2D)
+local Condition = require(Shared.Condition)
 local HazardTiming = require(Shared.HazardTiming)
 local MapFlow = require(Shared.MapFlow)
 local MapQuery = require(Shared.MapQuery)
@@ -136,9 +137,7 @@ local function flameAttack(a: Active, atk)
 				local vx, vz = World.position(v)
 				if Combat2D.inArc(x, z, e.aim, half, reach, vx, vz, World.hitRadius(v, Config)) then
 					Combat.damage(v, atk.damage * a.dmg / ticks, e, true, vx, vz)
-					v.burnUntil = now() + atk.burnDuration
-					v.burnDps = atk.burnDps * a.dmg
-					v.burnSourceId = e.id
+					Condition.ignite(v.condition, now() + atk.burnDuration, atk.burnDps * a.dmg, e.id)
 				end
 			end
 			for k = 1, 3 do
@@ -293,7 +292,7 @@ function Bosses.killActive(by: World.Entity?)
 		if by then
 			(a.e.hitBy :: { [number]: boolean })[by.id] = true
 		end
-		a.e.hp, a.e.armor, a.e.tempArmor = 1, 0, 0
+		Condition.set(a.e.condition, { hp = 1, armor = 0, tempArmor = 0 })
 		Combat.damage(a.e, 10, nil, true, 0, 0)
 	end
 end
@@ -702,7 +701,7 @@ end
 function Bosses.status(): string
 	local a = active
 	if a then
-		return `{a.def.name} is in its arena ({math.floor(a.e.hp)} HP).`
+		return `{a.def.name} is in its arena ({math.floor(a.e.condition.hp)} HP).`
 	end
 	if flow.phase == "grassland" then
 		return `Next boss in about {math.max(0, math.floor((flow.nextBossAt - now()) / 60 + 0.5))} min (needs {B.minPlayers}+ players).`

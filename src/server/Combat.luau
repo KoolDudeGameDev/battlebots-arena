@@ -13,7 +13,7 @@ local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 local Combat2D = require(Shared.Combat2D)
 local MapQuery = require(Shared.MapQuery)
-local Damage = require(Shared.Damage)
+local Condition = require(Shared.Condition)
 local Stats = require(Shared.Stats)
 local Chassis = require(Shared.Chassis)
 local Upgrades = require(Shared.Upgrades)
@@ -88,7 +88,7 @@ end
 
 -- Attributes are only rewritten when the rounded value changes (regen runs per frame).
 local function syncHp(e: World.Entity)
-	local rounded = math.floor(e.hp + 0.5)
+	local rounded = math.floor(e.condition.hp + 0.5)
 	local model = e.model
 	if model and model:GetAttribute("HP") ~= rounded then
 		model:SetAttribute("HP", rounded)
@@ -97,7 +97,7 @@ end
 Combat.syncHp = syncHp
 
 local function syncArmor(e: World.Entity)
-	local rounded = math.floor(e.armor + e.tempArmor + 0.5)
+	local rounded = math.floor(e.condition.armor + e.condition.tempArmor + 0.5)
 	local model = e.model
 	if model and model:GetAttribute("Armor") ~= rounded then
 		model:SetAttribute("Armor", rounded)
@@ -163,7 +163,7 @@ end
 function Combat.syncGuard(e: World.Entity)
 	if e.model then
 		local max = guardMax(e)
-		e.model:SetAttribute("Guard", if max > 0 then math.floor(e.guardHp / max * 100) / 100 else 0)
+		e.model:SetAttribute("Guard", if max > 0 then math.floor(e.condition.guardHp / max * 100) / 100 else 0)
 	end
 end
 
@@ -400,126 +400,106 @@ local function feedback(target: World.Entity, attacker: World.Entity?, hx: numbe
 	end
 end
 
+-- What the robot's build allows right now, for Condition (D90).
+local function limitsOf(e: World.Entity): Condition.Limits
+	return {
+		maxHp = e.stats.maxHp,
+		maxArmor = e.stats.maxArmor,
+		maxGuard = guardMax(e),
+		deflectChance = e.stats.deflectChance,
+		armorRegenDelay = Config.Armor.regenDelayByChassis[e.chassisId] or Config.Armor.regenDelay,
+	}
+end
+
 -- splash = true means it cannot deflect (explosions, flames, burn).
+-- The attacker and map rules are decided here; how the hit lands on the robot is
+-- Condition's (D90). This applies what comes back: attributes, sparks, hit numbers,
+-- kill credit.
 function Combat.damage(target: World.Entity, amount: number, attacker: World.Entity?, splash: boolean, hx: number, hz: number)
 	local t = now()
-	if not target.alive or target.god or t < target.protectedUntil then
-		return
-	end
 	-- Boss arenas are co-op (Q1): players can't hurt each other there.
 	if attacker and attacker ~= target and attacker.player and target.player and Arena.isArena() then
 		return
 	end
-	if t < target.shieldUntil then
-		if not splash then
-			return
-		end
-		amount *= Config.Combat.ShieldSplashFactor
-	end
-	-- Shield Generator (D69): direct hits from the front arc drain the front shield first.
-	if not splash and target.guardHp > 0 and attacker and attacker ~= target then
+	local byOther = attacker ~= nil and attacker ~= target
+	-- Shield Generator (D69): only direct hits from inside the front arc reach it.
+	local fromFront = false
+	if byOther and not splash and target.condition.guardHp > 0 then
 		local tx, tz = World.position(target)
-		local ax, az = World.position(attacker)
+		local ax, az = World.position(attacker :: World.Entity)
 		local half = math.rad(Config.Weapons.shieldgen.arcDegrees / 2)
-		if Combat2D.angleDiff(math.atan2(az - tz, ax - tx), target.aim) <= half then
-			local absorbed = math.min(target.guardHp, amount)
-			target.guardHp -= absorbed
-			target.guardHitAt = t
-			amount -= absorbed
-			Combat.syncGuard(target)
-			Remotes.Effect:FireAllClients("deflect", hx, hz, 1)
-			if amount <= 0 then
-				return
-			end
-		end
+		fromFront = Combat2D.angleDiff(math.atan2(az - tz, ax - tx), target.aim) <= half
 	end
-	-- Damaging a robot ends your own spawn protection (auto-fire alone does not).
-	if attacker and attacker ~= target then
-		endProtection(attacker)
-		-- Underdog bonus (D53): lower levels hit higher levels harder.
-		if not target.isDummy and not target.isBoss then
-			amount *= Stats.underdogFactor(Config, attacker.level, target.level)
-		end
+	-- Underdog bonus (D53): lower levels hit higher levels harder.
+	local scale = 1
+	if byOther and not target.isDummy and not target.isBoss then
+		scale = Stats.underdogFactor(Config, (attacker :: World.Entity).level, target.level)
+	end
+	local r = Condition.hit(target.condition, {
+		amount = amount,
+		splash = splash,
+		t = t,
+		roll = rng:NextNumber(),
+		protected = not target.alive or target.god or t < target.protectedUntil,
+		shielded = t < target.shieldUntil,
+		fromFront = fromFront,
+		scale = scale,
+		shell = isShell(target),
+	}, limitsOf(target), Config)
+	if r.guardAbsorbed > 0 or r.stage == "guarded" then
+		Combat.syncGuard(target)
+		Remotes.Effect:FireAllClients("deflect", hx, hz, 1)
+	end
+	if r.stage ~= "landed" then
+		return
+	end
+
+	if byOther then
+		local a = attacker :: World.Entity
+		-- Damaging a robot ends your own spawn protection (auto-fire alone does not).
+		endProtection(a)
 		-- Bosses remember everyone who hit them: they all share the reward (D39).
-		if target.hitBy and attacker.player then
-			target.hitBy[attacker.id] = true
+		if target.hitBy and a.player then
+			target.hitBy[a.id] = true
 		end
-	end
-
-	-- The Bomber's shell shrugs off part of any splash (D84).
-	if splash and isShell(target) then
-		amount *= 1 - Config.Bomber.plating
-	end
-
-	-- Armor absorbs first and may deflect the whole hit (D33).
-	local chance = target.stats.deflectChance
-	if chance <= 0 and target.tempArmor > 0 then
-		chance = Config.Armor.tempDeflect
-	end
-	local hp, _, deflected, armorTaken, hpTaken = Damage.resolve(target.hp, target.armor + target.tempArmor, amount, chance, rng:NextNumber(), splash)
-	target.lastHitAt = t
-	if attacker and attacker.id ~= target.id then
-		target.lastDamagerId = attacker.id
+		target.lastDamagerId = a.id
 		target.lastDamageAt = t
 	end
-	feedback(target, attacker, hx, hz, deflected, armorTaken, hpTaken)
-	if deflected then
+	feedback(target, attacker, hx, hz, r.deflected, r.armorTaken, r.hpTaken)
+	if r.deflected then
 		Remotes.Effect:FireAllClients("deflect", hx, hz, 1.5)
 		return
 	end
-	local fromTemp = math.min(target.tempArmor, armorTaken) -- Armor Pod armor goes first
-	target.tempArmor -= fromTemp
-	target.armor = math.max(0, target.armor - (armorTaken - fromTemp))
-	target.hp = hp
 	syncArmor(target)
-	addPressure(target, (armorTaken + hpTaken) * Config.Bomber.pressure.perDamage) -- the shell turns hits into Pressure (D84)
+	addPressure(target, (r.armorTaken + r.hpTaken) * Config.Bomber.pressure.perDamage) -- the shell turns hits into Pressure (D84)
 
-	if target.hp <= 0 then
-		target.hp = 0
-		syncHp(target)
+	syncHp(target)
+	if r.died then
 		local killer = nil
 		if target.lastDamagerId and t - target.lastDamageAt <= Config.Combat.KillCreditWindow then
 			killer = World.entities[target.lastDamagerId]
 		end
 		World.hooks.onKill(target, killer)
 	else
-		syncHp(target)
 		World.hooks.markDirty(target)
 	end
 end
 
 -- Booster pods (D34, D41). Health only ever comes from the map.
 function Combat.applyPod(e: World.Entity, kind: string)
-	local P = Config.Pods
-	local t = now()
-	local maxHp = e.stats.maxHp
-	if kind == "health" then
-		e.hp = math.min(maxHp, e.hp + maxHp * P.health.heal)
-		syncHp(e)
-	elseif kind == "regen" then
-		e.regenUntil = t + P.regen.duration
-		e.regenRate = maxHp * P.regen.heal / P.regen.duration
-		if e.model then
-			e.model:SetAttribute("RegenUntil", e.regenUntil)
-		end
-	elseif kind == "armor" then
-		e.armor = e.stats.maxArmor
-		e.tempArmor = P.armor.tempArmor
-		e.tempArmorUntil = t + P.armor.duration
-		if e.model then
-			e.model:SetAttribute("TempArmorUntil", e.tempArmorUntil)
-		end
-		syncArmor(e)
-	elseif kind == "fortify" then
-		-- Flat bonus max HP, arriving filled (D54). Re-picking refreshes the timer.
-		local added = P.fortify.bonusHp - e.bonusHp
-		e.bonusHp = P.fortify.bonusHp
-		e.bonusHpUntil = t + P.fortify.duration
-		World.hooks.refreshStats(e)
-		e.hp = math.min(e.stats.maxHp, e.hp + added)
-		syncHp(e)
-		if e.model then
-			e.model:SetAttribute("FortifyUntil", e.bonusHpUntil)
+	local c = e.condition
+	if Condition.pod(c, kind, now(), limitsOf(e), Config) then
+		World.hooks.refreshStats(e) -- Fortify raised max HP
+	end
+	syncHp(e)
+	syncArmor(e)
+	if e.model then
+		if kind == "regen" then
+			e.model:SetAttribute("RegenUntil", c.regenUntil)
+		elseif kind == "armor" then
+			e.model:SetAttribute("TempArmorUntil", c.tempArmorUntil)
+		elseif kind == "fortify" then
+			e.model:SetAttribute("FortifyUntil", c.bonusHpUntil)
 		end
 	end
 	World.hooks.markDirty(e)
@@ -877,9 +857,7 @@ local function flame(e: World.Entity, w, t: number)
 			local dmg = w.damagePerTick * s.damageMult
 			if tg.e then
 				Combat.damage(tg.e, dmg, e, true, tg.x, tg.z)
-				tg.e.burnUntil = t + w.burnDuration
-				tg.e.burnDps = w.burnDps * s.damageMult
-				tg.e.burnSourceId = e.id
+				Condition.ignite(tg.e.condition, t + w.burnDuration, w.burnDps * s.damageMult, e.id)
 			elseif tg.crate then
 				Pickups.damageCrate(tg.crate, dmg, e)
 			end
@@ -1519,8 +1497,7 @@ local function useSkill(e: World.Entity)
 			-- The shell is spent: it stays behind as the husk, and the core pops out.
 			setPressure(e, 0)
 			spawnHusk(e, bx, bz)
-			e.hp = math.min(e.hp, e.stats.maxHp * B.hpAfter)
-			e.armor = 0
+			Condition.set(e.condition, { hp = math.min(e.condition.hp, e.stats.maxHp * B.hpAfter), armor = 0 })
 			syncHp(e)
 			syncArmor(e)
 			World.hooks.setSmall(e, true)
@@ -1560,8 +1537,7 @@ local function rebuildShell(e: World.Entity, reclaimed: boolean)
 	Combat.removeHusk(e)
 	World.hooks.setSmall(e, false)
 	if reclaimed then
-		e.hp = math.max(e.hp, e.stats.maxHp * B.rebuildAt)
-		e.armor = e.stats.maxArmor
+		Condition.set(e.condition, { hp = math.max(e.condition.hp, e.stats.maxHp * B.rebuildAt), armor = e.stats.maxArmor })
 		syncHp(e)
 		syncArmor(e)
 		local x, z = World.position(e)
@@ -1584,12 +1560,13 @@ local function tickBomber(e: World.Entity, t: number, dt: number)
 	if not e.build.small then
 		return
 	end
-	if e.hp > 0 and e.hp < e.stats.maxHp then
+	local hp = e.condition.hp
+	if hp > 0 and hp < e.stats.maxHp then
 		-- The core heals itself, the one exception to D33 (D80).
-		e.hp = math.min(e.stats.maxHp, e.hp + e.stats.maxHp * B.smallRegenPerSecond * dt)
+		Condition.heal(e.condition, e.stats.maxHp * B.smallRegenPerSecond * dt, e.stats.maxHp)
 		syncHp(e)
 	end
-	if e.hp >= e.stats.maxHp * B.rebuildAt then
+	if e.condition.hp >= e.stats.maxHp * B.rebuildAt then
 		rebuildShell(e, false) -- healed: the bombs are back (D70)
 		return
 	end
@@ -1604,7 +1581,7 @@ local function tickBomber(e: World.Entity, t: number, dt: number)
 	local x, z = World.position(e)
 	local close = (x - w.cx) ^ 2 + (z - w.cz) ^ 2 <= (w.halfU + World.hitRadius(e, Config) + B.reclaim.reach) ^ 2
 	local before = e.reclaimT
-	e.reclaimT = if close and t - e.lastHitAt > 0.2 then e.reclaimT + dt else 0
+	e.reclaimT = if close and t - e.condition.lastHitAt > 0.2 then e.reclaimT + dt else 0
 	local fill = w.part and w.part:FindFirstChild("ReclaimFill") :: Part?
 	local step = math.floor(e.reclaimT / B.reclaim.hold * 10) / 10
 	if fill and step ~= math.floor(before / B.reclaim.hold * 10) / 10 then
@@ -1621,45 +1598,26 @@ local function tickSustain(e: World.Entity, t: number, dt: number)
 	if e.chassisId == "bomber" then
 		tickBomber(e, t, dt)
 	end
-	local maxGuard = guardMax(e)
-	if maxGuard > 0 and e.guardHp < maxGuard and t - e.guardHitAt >= Config.Weapons.shieldgen.regenDelay then
-		e.guardHp = math.min(maxGuard, e.guardHp + maxGuard * Config.Weapons.shieldgen.regenPerSecond * dt)
+	local r = Condition.tick(e.condition, t, dt, limitsOf(e), Config)
+	if r.guardChanged then
 		Combat.syncGuard(e)
 	end
-	local maxArmor = e.stats.maxArmor
-	local regenDelay = Config.Armor.regenDelayByChassis[e.chassisId] or Config.Armor.regenDelay
-	if maxArmor > 0 and e.armor < maxArmor and t - e.lastHitAt >= regenDelay then
-		e.armor = math.min(maxArmor, e.armor + maxArmor * Config.Armor.regenPerSecond * dt)
+	if r.armorChanged then
 		syncArmor(e)
 	end
-	if e.tempArmor > 0 and t >= e.tempArmorUntil then
-		e.tempArmor = 0
-		syncArmor(e)
+	if r.bonusExpired then
+		World.hooks.refreshStats(e) -- Fortify ran out: clamps HP down to the normal max
 	end
-	if e.bonusHp > 0 and t >= e.bonusHpUntil then
-		e.bonusHp = 0
-		World.hooks.refreshStats(e) -- clamps HP down to the normal max
-		syncHp(e)
-	end
-	if t < e.regenUntil and e.hp < e.stats.maxHp then
-		e.hp = math.min(e.stats.maxHp, e.hp + e.regenRate * dt)
+	if r.hpChanged or r.bonusExpired then
 		syncHp(e)
 	end
 	-- Clients set burning robots alight (fire, smoke and a glow) from this attribute (D88).
-	local burning = t < e.burnUntil
-	if e.model and e.model:GetAttribute("Burning") ~= burning then
-		e.model:SetAttribute("Burning", burning)
+	if e.model and e.model:GetAttribute("Burning") ~= r.burning then
+		e.model:SetAttribute("Burning", r.burning)
 	end
-	if burning then
-		e.burnAcc += e.burnDps * dt
-		if e.burnAcc >= e.burnDps * Config.Combat.BurnTick then
-			local amount = e.burnAcc
-			e.burnAcc = 0
-			local x, z = World.position(e)
-			Combat.damage(e, amount, World.entities[e.burnSourceId or -1], true, x, z)
-		end
-	else
-		e.burnAcc = 0
+	if r.burnDamage > 0 then
+		local x, z = World.position(e)
+		Combat.damage(e, r.burnDamage, World.entities[r.burnSourceId or -1], true, x, z)
 	end
 end
 
@@ -1766,10 +1724,10 @@ function Combat.init()
 				if not e.isBoss and MapQuery.inLava(Arena.map(), x, z) then
 					slow *= L.slow
 					e.inLava = true
-					e.burnDps, e.burnUntil, e.burnSourceId = L.dps, t + 0.3, nil
+					Condition.ignite(e.condition, t + 0.3, L.dps, nil)
 				elseif e.inLava then
 					e.inLava = false
-					e.burnDps, e.burnUntil = L.burnDps, t + L.burnDuration
+					Condition.ignite(e.condition, t + L.burnDuration, L.burnDps, e.condition.burnSourceId)
 				end
 				if slow ~= e.slowFactor then
 					e.slowFactor = slow

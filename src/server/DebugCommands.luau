@@ -13,6 +13,7 @@ local XpCurve = require(Shared.XpCurve)
 local Upgrades = require(Shared.Upgrades)
 local OfferGenerator = require(Shared.OfferGenerator)
 local Chassis = require(Shared.Chassis)
+local Condition = require(Shared.Condition)
 local World = require(script.Parent.World)
 local Match = require(script.Parent.Match)
 local Combat = require(script.Parent.Combat)
@@ -221,7 +222,7 @@ handlers["/god"] = function(e: World.Entity)
 end
 
 handlers["/heal"] = function(e: World.Entity)
-	e.hp = e.stats.maxHp
+	Condition.set(e.condition, { hp = e.stats.maxHp })
 	Combat.syncHp(e)
 end
 

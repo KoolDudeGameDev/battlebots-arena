@@ -17,6 +17,7 @@ local OfferGenerator = require(Shared.OfferGenerator)
 local Combat2D = require(Shared.Combat2D)
 local Stats = require(Shared.Stats)
 local Chassis = require(Shared.Chassis)
+local Condition = require(Shared.Condition)
 local World = require(script.Parent.World)
 local Arena = require(script.Parent.Arena)
 local Guard = require(script.Parent.Guard)
@@ -51,18 +52,7 @@ local function newEntity(player: Player?): World.Entity
 		root = nil,
 		humanoid = nil,
 		alive = false,
-		hp = Config.Robot.MaxHp,
-		armor = 0,
-		tempArmor = 0,
-		tempArmorUntil = 0,
-		regenUntil = 0,
-		regenRate = 0,
-		bonusHp = 0,
-		bonusHpUntil = 0,
-		burnUntil = 0,
-		burnDps = 0,
-		burnSourceId = nil,
-		burnAcc = 0,
+		condition = Condition.new(Config.Robot.MaxHp),
 		pushGrantAt = -math.huge,
 		pushRoom = 0,
 		chassisId = Chassis.default,
@@ -96,11 +86,8 @@ local function newEntity(player: Player?): World.Entity
 		reclaimT = 0,
 		waitingForArena = false,
 		stunnedUntil = 0,
-		guardHp = 0,
-		guardHitAt = -math.huge,
 		skillReadyAt = 0,
 		dashGrantAt = -math.huge,
-		lastHitAt = -math.huge,
 		lastDamagerId = nil,
 		lastDamageAt = -math.huge,
 		comebackTarget = nil,
@@ -134,9 +121,8 @@ function Match.refreshStats(e: World.Entity)
 		e.stats.hitRadius = Config.Robot.HitboxRadius * scale
 		e.stats.mass = 50
 	end
-	e.stats.maxHp += e.bonusHp -- Fortify Pod
-	e.hp = math.min(e.hp, e.stats.maxHp)
-	e.armor = math.min(e.armor, e.stats.maxArmor)
+	e.stats.maxHp += e.condition.bonusHp -- Fortify Pod
+	Condition.clamp(e.condition, e.stats.maxHp, e.stats.maxArmor)
 	Combat.applyWalkSpeed(e)
 	local model = e.model
 	if model then
@@ -167,7 +153,7 @@ local function setupModel(e: World.Entity, model: Model, color: Color3)
 	model:SetAttribute("Flipped", false) -- Flipper stun (D72)
 	model:SetAttribute("Marked", false) -- marked by a Bomber net (D84)
 	model:SetAttribute("Pressure", if e.chassisId == "bomber" then math.floor(e.pressure) else nil) -- Bomber shell (D84)
-	model:SetAttribute("HP", math.floor(e.hp + 0.5))
+	model:SetAttribute("HP", math.floor(e.condition.hp + 0.5))
 	e.model = model
 	e.root = model.PrimaryPart
 	e.humanoid = model:FindFirstChildOfClass("Humanoid")
@@ -247,7 +233,7 @@ function Match.setChassis(e: World.Entity, chassisId: string)
 	e.visualScale = Stats.visualScale(Config, e.level) * Stats.bodySize(e.build)
 	local oldMax = e.stats.maxHp
 	Match.refreshStats(e)
-	e.hp = math.clamp(e.hp + e.stats.maxHp - oldMax, 1, e.stats.maxHp)
+	Condition.set(e.condition, { hp = math.clamp(e.condition.hp + e.stats.maxHp - oldMax, 1, e.stats.maxHp) })
 	Combat.syncHp(e)
 	redress(e)
 	return true
@@ -289,11 +275,8 @@ local function spawnPlayer(e: World.Entity, keep: boolean?)
 		e.stats = Stats.compute(Config, e.build, 0)
 		e.visualScale = Stats.visualScale(Config, 0) * Stats.bodySize(e.build)
 	end
-	e.hp = e.stats.maxHp
-	e.armor, e.tempArmor, e.tempArmorUntil = 0, 0, 0
-	e.regenUntil, e.regenRate = 0, 0
-	e.bonusHp, e.bonusHpUntil = 0, 0
-	e.burnUntil, e.burnAcc, e.burnSourceId, e.inLava = 0, 0, nil, false
+	e.condition = Condition.new(e.stats.maxHp) -- full health, no armor, pods or burn
+	e.inLava = false
 	if not keep then
 		e.offer, e.pendingOffers = nil, 0
 	end
@@ -303,8 +286,7 @@ local function spawnPlayer(e: World.Entity, keep: boolean?)
 	e.fieldUntil, e.slowFactor, e.rootedUntil, e.netUntil, e.stunnedUntil = 0, 1, 0, 0, 0
 	e.netImmuneUntil, e.markedUntil, e.pressure, e.reclaimT, e.waitingForArena = 0, 0, 0, 0, false
 	World.hooks.removeHusk(e)
-	e.guardHp, e.guardHitAt = 0, -math.huge
-	e.dashGrantAt, e.lastHitAt, e.lastDamageAt = -math.huge, -math.huge, -math.huge
+	e.dashGrantAt, e.lastDamageAt = -math.huge, -math.huge
 	e.lastDamagerId = nil
 	-- comebackTarget is kept on purpose: it was set by the death that led here.
 
@@ -332,7 +314,7 @@ local function spawnPlayer(e: World.Entity, keep: boolean?)
 	setupModel(e, model, color)
 	if keep then
 		model:SetAttribute("VisualScale", e.visualScale)
-		e.hp = e.stats.maxHp
+		Condition.set(e.condition, { hp = e.stats.maxHp })
 		Combat.syncHp(e)
 	end
 
@@ -386,7 +368,7 @@ local function onLevelChanged(e: World.Entity)
 	-- Level growth raises max HP (D26); the new HP arrives filled, not empty.
 	local oldMax = e.stats.maxHp
 	Match.refreshStats(e)
-	e.hp = math.min(e.stats.maxHp, e.hp + math.max(0, e.stats.maxHp - oldMax))
+	Condition.heal(e.condition, math.max(0, e.stats.maxHp - oldMax), e.stats.maxHp)
 	Combat.syncHp(e)
 	local scale = Stats.visualScale(Config, e.level) * Stats.bodySize(e.build)
 	local dressed = (if e.model then e.model:GetAttribute("DressedLevel") else 0) :: number?
@@ -430,7 +412,7 @@ function Match.applyCard(e: World.Entity, card)
 	if card.category == "Stat" or card.category == "Modifier" then
 		b.stacks[id] = (b.stacks[id] or 0) + 1
 		if id == "stat_hp" then
-			e.hp += Config.StatPerStack.stat_hp
+			Condition.heal(e.condition, Config.StatPerStack.stat_hp, math.huge) -- refreshStats below clamps
 		end
 	elseif card.category == "Weapon" then
 		if (b.stacks[id] or 0) == 0 then
@@ -456,14 +438,14 @@ function Match.applyCard(e: World.Entity, card)
 		World.hooks.spawnPod("health", x + 4, z) -- health only comes from the map (D33)
 	elseif id == "fb_reinforce" then
 		b.stacks[id] = (b.stacks[id] or 0) + 1
-		e.hp += Config.StatPerStack.fb_reinforce_hp
+		Condition.heal(e.condition, Config.StatPerStack.fb_reinforce_hp, math.huge)
 	elseif id == "fb_cache" then
 		Match.addXp(e, math.floor(XpCurve.toNext(e.level) * Config.StatPerStack.fb_cache_fraction), "cache")
 	end
 	local oldMaxArmor = e.stats.maxArmor
 	Match.refreshStats(e)
 	if id == "stat_armor" then -- new plating arrives fully charged
-		e.armor = math.min(e.stats.maxArmor, e.armor + e.stats.maxArmor - oldMaxArmor)
+		Condition.set(e.condition, { armor = math.min(e.stats.maxArmor, e.condition.armor + e.stats.maxArmor - oldMaxArmor) })
 		Combat.syncArmor(e)
 	end
 	redress(e)
@@ -656,12 +638,11 @@ function Match.spawnDummy(x: number, z: number, opts: DummyOptions?)
 	e.level = o.level or 0
 	e.name = o.name or "Dummy"
 	e.visualScale = Stats.visualScale(Config, e.level) * Stats.bodySize(e.build)
-	e.hp = DUMMY_HP
+	Condition.set(e.condition, { hp = DUMMY_HP })
 	local model = RobotBuilder.buildDummy(x, z, e.build, e.visualScale, e.chassisId, e.level)
 	World.entities[e.id] = e
 	setupModel(e, model, Color3.fromRGB(118, 122, 116)) -- bare primer grey
-	e.hp = DUMMY_HP
-	e.armor = e.stats.maxArmor
+	Condition.set(e.condition, { hp = DUMMY_HP, armor = e.stats.maxArmor })
 	Combat.syncHp(e)
 	Combat.syncArmor(e)
 	e.alive = true
@@ -688,13 +669,12 @@ function Match.spawnBoss(def, x: number, z: number, maxHp: number): World.Entity
 	e.level = 100 -- the gold Lv 100 look; bosses give no underdog bonus
 	e.name = def.name
 	e.visualScale = def.scale
-	e.hp = maxHp
+	Condition.set(e.condition, { hp = maxHp })
 	local model = RobotBuilder.buildDummy(x, z, e.build, e.visualScale, e.chassisId, e.level)
 	model.Name = def.name
 	World.entities[e.id] = e
 	setupModel(e, model, Color3.fromRGB(def.color[1], def.color[2], def.color[3]))
-	e.hp = maxHp
-	e.armor = e.stats.maxArmor
+	Condition.set(e.condition, { hp = maxHp, armor = e.stats.maxArmor })
 	Combat.syncHp(e)
 	Combat.syncArmor(e)
 	model:SetAttribute("BossName", def.name)

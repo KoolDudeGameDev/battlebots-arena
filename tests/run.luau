@@ -19,7 +19,7 @@ local suites = {
 	require("./OfferGenerator.spec"),
 	require("./Combat2D.spec"),
 	require("./Stats.spec"),
-	require("./Damage.spec"),
+	require("./Condition.spec"),
 	require("./Phase3b.spec"),
 	require("./Balance.spec"),
 	require("./Duel.spec"),

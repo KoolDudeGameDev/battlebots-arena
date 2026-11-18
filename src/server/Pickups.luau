@@ -7,6 +7,7 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
+local Condition = require(Shared.Condition)
 local Remotes = require(Shared.Remotes)
 local World = require(script.Parent.World)
 local Arena = require(script.Parent.Arena)
@@ -301,7 +302,7 @@ local function collectFor(e: World.Entity)
 						end
 						if Config.Pods[o.kind] then
 							-- Healing pods wait on the floor until you are actually hurt.
-							local full = e.hp >= e.stats.maxHp - 0.5
+							local full = e.condition.hp >= e.stats.maxHp - 0.5
 							if not (full and (o.kind == "health" or o.kind == "regen")) then
 								removeOrb(o, userId)
 								World.hooks.applyPod(e, o.kind)
@@ -311,7 +312,7 @@ local function collectFor(e: World.Entity)
 						removeOrb(o, userId)
 						World.hooks.addXp(e, o.value, "orb")
 						if (e.build.stacks.mod_scavenger or 0) > 0 then
-							e.hp = math.min(e.stats.maxHp, e.hp + Config.Orbs[o.kind].heal)
+							Condition.heal(e.condition, Config.Orbs[o.kind].heal, e.stats.maxHp)
 							World.hooks.syncHp(e)
 							World.hooks.markDirty(e)
 						end

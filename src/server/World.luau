@@ -1,6 +1,9 @@
 -- Shared server state: every robot in the arena (players and debug dummies) and
 -- the hooks that let services call each other without circular requires.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Condition = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Condition"))
+
 local World = {}
 
 export type Entity = {
@@ -18,18 +21,8 @@ export type Entity = {
 	humanoid: Humanoid?,
 	alive: boolean,
 
-	hp: number,
-	armor: number, -- from Armor Plating; regenerates (D33)
-	tempArmor: number, -- from an Armor Pod; expires at tempArmorUntil
-	tempArmorUntil: number,
-	regenUntil: number, -- Regen Pod heal-over-time window
-	regenRate: number, -- HP per second while regenerating
-	bonusHp: number, -- Fortify Pod: flat extra max HP until bonusHpUntil (D54)
-	bonusHpUntil: number,
-	burnUntil: number, -- Scorcher flames keep burning (D44)
-	burnDps: number,
-	burnSourceId: number?,
-	burnAcc: number,
+	-- Health, armor, front shield, pods and burn (D90). Only Condition changes it.
+	condition: Condition.State,
 	inLava: boolean?, -- standing in a LavaZone (D81)
 	pushGrantAt: number, -- last knockback, so Guard allows the movement
 	pushRoom: number,
@@ -67,11 +60,8 @@ export type Entity = {
 	reclaimT: number, -- Bomber core: seconds parked on the husk
 	waitingForArena: boolean, -- killed in a boss arena: out until the fight ends (D85)
 	stunnedUntil: number, -- flipped: can't attack (D72)
-	guardHp: number, -- Shield Generator front shield (D69)
-	guardHitAt: number,
 	skillReadyAt: number,
 	dashGrantAt: number,
-	lastHitAt: number,
 	lastDamagerId: number?,
 	lastDamageAt: number,
 	comebackTarget: number?,
