@@ -15,6 +15,7 @@ local Remotes = require(Shared.Remotes)
 local Upgrades = require(Shared.Upgrades)
 local XpCurve = require(Shared.XpCurve)
 local ClientState = require(script.Parent.ClientState)
+local HudLayout = require(script.Parent.HudLayout)
 
 local Hud = {
 	aimTouchActive = nil :: (() -> (boolean, Vector2))?,
@@ -26,8 +27,10 @@ local TEXT = Color3.fromRGB(240, 242, 246)
 local MUTED = Color3.fromRGB(165, 170, 180)
 local isTouch = ClientState.isTouch
 local BODY = if isTouch then 16 else 14
--- Leaderboard rows: phones show the top 3 (plus you) so it ends above the SKILL button.
-local BOARD_ROWS = if isTouch then 3 else 5
+-- Sizes that depend only on the device kind come from the layout plan (D91);
+-- positions come from it too, in applyLayout, whenever the screen size changes.
+local SIZES = HudLayout.sizes(isTouch)
+local BOARD_ROWS = SIZES.boardRows
 
 local function new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
@@ -96,6 +99,7 @@ local deathTimer: TextLabel
 local skillLabel: TextLabel
 local autoLabel: TextLabel
 local camHint: TextLabel
+local tipLimit: UISizeConstraint
 -- The view tip (D87): shown on your first spawn until you switch views once.
 local viewTip: TextLabel
 local tipShown = false
@@ -115,8 +119,9 @@ local deathRespawnAt: number? = nil
 
 -- Top left (D87, D88): health, armor under it, XP, with no panel behind them. Under
 -- them: timed boosts, then the kill feed.
-local PANEL_W = if isTouch then 200 else 280
+local PANEL_W = SIZES.panelW
 local leftColumn: Frame
+local chipsFrame: Frame
 
 local function barRow(parent: Instance, order: number, glyph: string, height: number, color: Color3): (Frame, Frame, Frame)
 	local row = new("Frame", { LayoutOrder = order, Size = UDim2.new(1, 0, 0, height), BackgroundTransparency = 1 }, parent)
@@ -159,12 +164,12 @@ local function buildBars()
 	xpText = text(xpBack, { Position = UDim2.fromScale(0.6, 0), Size = UDim2.new(0.4, -8, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, Text = "", TextSize = 12, TextTruncate = Enum.TextTruncate.AtEnd, TextStrokeTransparency = 0.6, ZIndex = 2 })
 
 	-- Status chips (comeback, Regen Pod, Armor Pod, Fortify), under the bars.
-	local chips = new("Frame", { LayoutOrder = 2, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, leftColumn)
+	local chips = new("Frame", { Name = "Chips", LayoutOrder = 2, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, leftColumn)
 	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }, chips)
 	local function chip(order: number, color: Color3): TextLabel
 		local p = text(chips, {
 			LayoutOrder = order,
-			Size = UDim2.fromOffset(150, 22), -- phones: ends left of the upgrade cards
+			Size = UDim2.fromOffset(SIZES.chipW, 22),
 			BackgroundTransparency = 0,
 			BackgroundColor3 = color,
 			Font = Enum.Font.GothamBold,
@@ -179,6 +184,7 @@ local function buildBars()
 	regenPill = chip(2, Color3.fromRGB(70, 170, 70))
 	armorPill = chip(3, Color3.fromRGB(60, 130, 210))
 	fortifyPill = chip(4, Color3.fromRGB(200, 80, 160))
+	chipsFrame = chips
 end
 
 -- Upgrade tray --------------------------------------------------------------------
@@ -197,17 +203,12 @@ local function kindText(card): string
 	return "Rank " .. card.rank
 end
 
--- Upgrade cards sit at the bottom (the bars moved to the build panel, D87). Phones:
--- smaller cards, right-aligned just left of the thumb buttons (which take the last 168 px).
-local CARD_W = if isTouch then 124 else 150
-local TRAY_ANCHOR = if isTouch then Vector2.new(1, 1) else Vector2.new(0.5, 1)
-local TRAY_POS = if isTouch then UDim2.new(1, -180, 1, -12) else UDim2.new(0.5, 0, 1, -16)
+-- Upgrade cards sit at the bottom; HudLayout places them (D91).
+local CARD_W = SIZES.cardW
 
 local function buildTray()
 	tray = new("Frame", {
 		Name = "Tray",
-		AnchorPoint = TRAY_ANCHOR,
-		Position = TRAY_POS,
 		Size = UDim2.fromOffset(CARD_W * 3 + 20, 128),
 		BackgroundTransparency = 1,
 		Visible = false,
@@ -220,8 +221,8 @@ local function buildTray()
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, cardHolder)
 	queueBadge = text(tray, {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, 6, 0, 0),
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -4, 0, 4), -- inside the tray, so it stays in the plan's rect
 		Size = UDim2.fromOffset(40, 24),
 		BackgroundTransparency = 0,
 		BackgroundColor3 = Color3.fromRGB(235, 80, 70),
@@ -234,9 +235,7 @@ local function buildTray()
 
 	collapsed = new("TextButton", {
 		Name = "LevelUp",
-		AnchorPoint = TRAY_ANCHOR,
-		Position = TRAY_POS,
-		Size = UDim2.fromOffset(190, 40),
+		Size = UDim2.fromOffset(190, 44),
 		BackgroundColor3 = Color3.fromRGB(70, 140, 255),
 		Font = Enum.Font.GothamBold,
 		TextSize = 16,
@@ -327,6 +326,7 @@ end
 -- Leaderboard and kill feed -----------------------------------------------------
 
 local boardRows: Frame
+local boardGui: ScreenGui
 local boardOpen = true
 
 local function setBoardOpen(open: boolean)
@@ -342,10 +342,8 @@ local function buildBoard()
 	-- Like Roblox's own player list (D88): top right, level with the Roblox buttons
 	-- (its own ScreenGui ignores the top bar, but keeps clear of a phone's notch).
 	-- Tab shows and hides it; on phones, tapping its header does.
-	local boardGui = new("ScreenGui", { Name = "Board", ResetOnSpawn = false, ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets }, gui.Parent)
+	boardGui = new("ScreenGui", { Name = "Board", ResetOnSpawn = false, ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets }, gui.Parent)
 	board = new("Frame", {
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -12, 0, 16),
 		Size = UDim2.fromOffset(if isTouch then 200 else 220, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = PANEL,
@@ -438,7 +436,7 @@ local function addFeed(killerName: string, victimName: string, victimLevel: numb
 	table.sort(entries, function(a, b)
 		return a.LayoutOrder < b.LayoutOrder
 	end)
-	while #entries > (if isTouch then 2 else 4) do -- phones: the lower left is the move stick
+	while #entries > SIZES.feedRows do -- phones: the lower left is the move stick
 		local oldest = table.remove(entries, 1)
 		if oldest then
 			oldest:Destroy()
@@ -480,14 +478,16 @@ local coinText: TextLabel
 local coinScale: UIScale
 local lastCoins: number? = nil
 
+local walletBar: Frame
+
 local function buildWallet()
 	local bar = new("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 8),
 		Size = UDim2.fromOffset(0, 36),
 		AutomaticSize = Enum.AutomaticSize.X,
 		BackgroundTransparency = 1,
 	}, gui)
+	walletBar = bar
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), VerticalAlignment = Enum.VerticalAlignment.Center }, bar)
 	local pill = new("Frame", { Size = UDim2.fromOffset(0, 32), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = PANEL, BackgroundTransparency = 0.25, LayoutOrder = 1 }, bar)
 	corner(pill, 16)
@@ -500,9 +500,9 @@ local function buildWallet()
 	new("UIStroke", { Color = Color3.fromRGB(176, 120, 24), Thickness = 2 }, glyph)
 	local dot = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(8, 8), BackgroundColor3 = Color3.fromRGB(214, 158, 36) }, glyph)
 	corner(dot, 4)
-	coinText = text(pill, { Size = UDim2.fromOffset(0, 32), AutomaticSize = Enum.AutomaticSize.X, Text = "0 coins", TextColor3 = Color3.fromRGB(255, 196, 40), Font = Enum.Font.GothamBold, LayoutOrder = 1 })
+	coinText = text(pill, { Size = UDim2.fromOffset(0, 32), AutomaticSize = Enum.AutomaticSize.X, Text = if isTouch then "0" else "0 coins", TextColor3 = Color3.fromRGB(255, 196, 40), Font = Enum.Font.GothamBold, LayoutOrder = 1 })
 	local garage: TextButton = new("TextButton", {
-		Size = UDim2.fromOffset(if isTouch then 104 else 120, 32),
+		Size = UDim2.fromOffset(if isTouch then 96 else 120, 32),
 		BackgroundColor3 = Color3.fromRGB(255, 196, 40),
 		Font = Enum.Font.GothamBold,
 		TextSize = 14,
@@ -521,7 +521,11 @@ local function buildWallet()
 end
 
 local function updateWallet(coins: number)
-	coinText.Text = fmt(coins) .. " coins"
+	-- Phones: the coin icon says "coins", and 10,000 and up shows as "12.3k" so the pill
+	-- stays inside its HudLayout slot (D91).
+	coinText.Text = if not isTouch then fmt(coins) .. " coins"
+		elseif coins >= 10000 then string.format("%.1fk", math.floor(coins / 100) / 10)
+		else fmt(coins)
 	if lastCoins and coins > lastCoins then
 		-- A quick pop when coins come in (under 200 ms).
 		coinScale.Scale = 1.15
@@ -532,19 +536,23 @@ end
 
 -- Boss HP bar and the centre banner (Phase 4b, D74) ---------------------------------
 
+local bossFrame: Frame
+local banner: TextLabel
+local bannerUntil = 0 -- an announcement holds the message slot until then
+local mapLabel: TextLabel
+
 local function buildBoss()
 	local CollectionService = game:GetService("CollectionService")
 	local TweenService = game:GetService("TweenService")
 	local frame = new("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 50),
-		Size = UDim2.fromOffset(if isTouch then 300 else 380, 40),
+		Size = UDim2.fromOffset(380, 40),
 		BackgroundColor3 = PANEL,
 		BackgroundTransparency = 0.25,
 		Visible = false,
 	}, gui)
 	corner(frame, 8)
-	local name = text(frame, { Position = UDim2.fromOffset(10, 2), Size = UDim2.new(1, -20, 0, 18), Text = "", Font = Enum.Font.GothamBold, TextSize = 14 })
+	bossFrame = frame
+	local name = text(frame, { Position = UDim2.fromOffset(10, 2), Size = UDim2.new(1, -20, 0, 18), Text = "", Font = Enum.Font.GothamBold, TextSize = if isTouch then 12 else 14, TextTruncate = Enum.TextTruncate.AtEnd })
 	local back = new("Frame", { Position = UDim2.fromOffset(10, 22), Size = UDim2.new(1, -20, 0, 10), BackgroundColor3 = Color3.fromRGB(50, 30, 30), BorderSizePixel = 0 }, frame)
 	corner(back, 5)
 	local fill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(230, 70, 50), BorderSizePixel = 0 }, back)
@@ -555,35 +563,34 @@ local function buildBoss()
 		if boss then
 			local hp = (boss:GetAttribute("HP") or 0) :: number
 			local max = math.max(1, (boss:GetAttribute("MaxHP") or 1) :: number)
-			name.Text = `{boss:GetAttribute("BossName") or "Boss"}   {fmt(hp)} / {fmt(max)}`
+			-- Phones: just the HP left, so the name and the number both fit (D91).
+			name.Text = if isTouch then `{boss:GetAttribute("BossName") or "Boss"}   {fmt(hp)}` else `{boss:GetAttribute("BossName") or "Boss"}   {fmt(hp)} / {fmt(max)}`
 			fill.Size = UDim2.fromScale(math.clamp(hp / max, 0, 1), 1)
 		end
 	end)
 
-	local banner = text(gui, {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.28),
-		Size = UDim2.new(0.8, 0, 0, 40),
+	-- Announcements share the message slot with the view tip (D91): one replaces the other.
+	banner = text(gui, {
 		Text = "",
 		Font = Enum.Font.GothamBold,
-		TextSize = if isTouch then 20 else 26,
+		TextScaled = true, -- shrinks to fit its slot (D91)
+		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextStrokeTransparency = 0.4,
 		TextTransparency = 1,
 		TextStrokeColor3 = Color3.new(0, 0, 0),
 	})
 	-- The map flow (D81): which map is up and how long it lasts.
-	local mapLabel = text(gui, {
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 94),
-		Size = UDim2.new(0.6, 0, 0, 22),
+	mapLabel = text(gui, {
 		Text = "",
 		Font = Enum.Font.GothamBold,
-		TextSize = if isTouch then 14 else 17,
+		TextScaled = true, -- shrinks rather than cutting off the countdown (D91)
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextStrokeTransparency = 0.5,
 		TextStrokeColor3 = Color3.new(0, 0, 0),
 	})
+	new("UITextSizeConstraint", { MaxTextSize = if isTouch then 14 else 17, MinTextSize = 10 }, mapLabel)
+	new("UITextSizeConstraint", { MaxTextSize = SIZES.bannerText, MinTextSize = 11 }, banner)
 	local function clock(seconds: number): string
 		local s2 = math.max(0, math.floor(seconds))
 		return string.format("%d:%02d", s2 // 60, s2 % 60)
@@ -593,9 +600,11 @@ local function buildBoss()
 		local left = ((Workspace:GetAttribute("MapEndsAt") or 0) :: number) - Workspace:GetServerTimeNow()
 		local display = Workspace:GetAttribute("MapDisplay") or ""
 		local boss = Workspace:GetAttribute("MapBoss") or "Boss"
+		-- Phones drop the map name in the arena and shorten the victory line, so the
+		-- countdown always fits (D91).
 		mapLabel.Text = if phase == "warning" then `{boss} approaches · {clock(left)}`
-			elseif phase == "arena" then `{display} · {boss} leaves in {clock(left)}`
-			elseif phase == "victory" then `Victory! Back to the overworld in {clock(left)}`
+			elseif phase == "arena" then (if isTouch then `{boss} leaves in {clock(left)}` else `{display} · {boss} leaves in {clock(left)}`)
+			elseif phase == "victory" then (if isTouch then `Victory! Overworld in {clock(left)}` else `Victory! Back to the overworld in {clock(left)}`)
 			elseif phase == "biome" then `{display} · {clock(left)} left`
 			elseif phase == "revert" then `{display} fades in {clock(left)}`
 			else ""
@@ -761,6 +770,8 @@ local function buildBoss()
 		end
 		banner.Text = message
 		banner.TextTransparency, banner.TextStrokeTransparency = 0, 0.4
+		bannerUntil = os.clock() + 4.2
+		viewTip.Visible = false -- the announcement takes the message slot
 		shownAt = os.clock()
 		local mine = shownAt
 		task.delay(4, function()
@@ -771,45 +782,44 @@ local function buildBoss()
 	end)
 end
 
+local hintFrame: Frame
+
 local function buildControls()
 	local hint = new("Frame", {
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -12, 1, -14),
 		Size = UDim2.fromOffset(200, 133),
 		BackgroundColor3 = PANEL,
 		BackgroundTransparency = 0.25,
 		Visible = not isTouch,
 	}, gui)
 	corner(hint, 8)
+	hintFrame = hint
 	skillLabel = text(hint, { Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, Text = "SPACE · No skill" })
 	autoLabel = text(hint, { Position = UDim2.fromOffset(10, 25), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "E · Auto-fire OFF" })
 	camHint = text(hint, { Position = UDim2.fromOffset(10, 46), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "V · Top-down view" })
 
 	viewTip = text(gui, {
-		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 122), -- under the map line
+		AnchorPoint = Vector2.new(0.5, 0), -- centred in the message slot (applyLayout)
 		Size = UDim2.fromOffset(0, 28),
 		AutomaticSize = Enum.AutomaticSize.X,
 		BackgroundTransparency = 0.2,
 		BackgroundColor3 = PANEL,
 		Font = Enum.Font.GothamBold,
 		TextSize = 14,
+		TextTruncate = Enum.TextTruncate.AtEnd,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		Visible = false,
 	})
 	corner(viewTip, 14)
+	tipLimit = new("UISizeConstraint", {}, viewTip) -- applyLayout caps it at the message slot
 	new("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }, viewTip)
 	text(hint, { Position = UDim2.fromOffset(10, 67), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "1 / 2 / 3 · Pick upgrade" })
 	text(hint, { Position = UDim2.fromOffset(10, 88), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "Ctrl · Cursor on / off" })
 	text(hint, { Position = UDim2.fromOffset(10, 109), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "Tab · Leaderboard" })
 
-	-- Phone buttons sit in one thumb cluster in the bottom-right corner, sized to fit a
-	-- ~750 x 344 landscape safe area: [CAM][SKILL] above [AUTO][FIRE]. The leaderboard
-	-- (top right) ends above SKILL; the upgrade cards (bottom, right-aligned) end left of it.
+	-- Phone buttons: one thumb cluster bottom right, [CAM][SKILL] above [AUTO][FIRE].
+	-- HudLayout places them (D91).
 	if isTouch then
 		local skill: TextButton = new("TextButton", {
-			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -26, 1, -116),
 			Size = UDim2.fromOffset(68, 68),
 			BackgroundColor3 = Color3.fromRGB(60, 120, 230),
 			Font = Enum.Font.GothamBold,
@@ -824,8 +834,6 @@ local function buildControls()
 		end)
 		skillButton = skill
 		local auto: TextButton = new("TextButton", {
-			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -116, 1, -20),
 			Size = UDim2.fromOffset(52, 52),
 			BackgroundColor3 = PANEL,
 			Font = Enum.Font.GothamBold,
@@ -841,9 +849,7 @@ local function buildControls()
 		autoButton = auto
 
 		local cam: TextButton = new("TextButton", {
-			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -116, 1, -84),
-			Size = UDim2.fromOffset(52, 36),
+			Size = UDim2.fromOffset(52, 44),
 			BackgroundColor3 = PANEL,
 			Font = Enum.Font.GothamBold,
 			TextSize = 13,
@@ -858,8 +864,6 @@ local function buildControls()
 
 		-- Third-person on phone: the right side turns the camera, so firing needs its own button.
 		local fire: TextButton = new("TextButton", {
-			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -16, 1, -16),
 			Size = UDim2.fromOffset(88, 88),
 			BackgroundColor3 = Color3.fromRGB(220, 70, 60),
 			Font = Enum.Font.GothamBlack,
@@ -891,6 +895,53 @@ local function buildControls()
 	}, gui)
 	corner(stickRing, 55)
 	new("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.5, Thickness = 2 }, stickRing)
+end
+
+-- Layout (D91) ------------------------------------------------------------------
+
+-- Places every widget from the HudLayout plan for the current screen. The plan is in
+-- the device-safe area (the Board gui); widgets in the main gui sit below the top bar.
+local function applyLayout()
+	local full = boardGui.AbsoluteSize
+	local topBar = gui.AbsolutePosition.Y - boardGui.AbsolutePosition.Y
+	local left = gui.AbsolutePosition.X - boardGui.AbsolutePosition.X -- 0 unless a device insets them differently
+	if full.X < 200 or full.Y < 150 then
+		return -- not laid out yet
+	end
+	local plan = HudLayout.plan({ w = full.X, h = full.Y, topBar = topBar, touch = isTouch })
+	local r = plan.rects
+	local function place(inst: GuiObject?, rect: HudLayout.Rect?, inMain: boolean, keepSize: boolean?)
+		if not inst or not rect then
+			return
+		end
+		inst.AnchorPoint = Vector2.zero
+		inst.Position = if inMain then UDim2.fromOffset(rect.x - left, rect.y - topBar) else UDim2.fromOffset(rect.x, rect.y)
+		if not keepSize then
+			inst.Size = UDim2.fromOffset(rect.w, rect.h)
+		end
+	end
+	-- Auto-sized widgets keep their height (or width) and are centred in their rect.
+	local function centreTop(inst: GuiObject, rect: HudLayout.Rect)
+		inst.AnchorPoint = Vector2.new(0.5, 0)
+		inst.Position = UDim2.fromOffset(rect.x + rect.w / 2 - left, rect.y - topBar)
+	end
+	place(leftColumn, r.bars, true, true)
+	leftColumn.Size = UDim2.fromOffset(r.bars.w, 0)
+	place(board, r.board, false, true)
+	board.Size = UDim2.fromOffset(r.board.w, 0)
+	centreTop(walletBar, r.wallet)
+	place(bossFrame, r.bossBar, true)
+	place(mapLabel, r.mapLine, true)
+	place(banner, r.message, true)
+	centreTop(viewTip, r.message)
+	tipLimit.MaxSize = Vector2.new(r.message.w, r.message.h)
+	place(tray, r.tray, true)
+	place(collapsed, r.levelUp, true)
+	place(hintFrame, r.hint, true)
+	place(skillButton, r.skill, true)
+	place(autoButton, r.auto, true)
+	place(camButton, r.cam, true)
+	place(fireButton, r.fire, true)
 end
 
 -- Per-frame updates -------------------------------------------------------------
@@ -954,6 +1005,7 @@ local function perFrame()
 	-- Phones: the kill feed steps aside while the upgrade cards are open (they share the left).
 	if isTouch then
 		feed.Visible = not tray.Visible
+		chipsFrame.Visible = not tray.Visible
 	end
 
 	-- Skill cooldown
@@ -1024,11 +1076,12 @@ local function onState(s)
 	if s.alive then
 		deathPanel.Visible = false
 		deathRespawnAt = nil
-		if not tipShown and not camSwitched then
+		-- The tip waits while an announcement holds the message slot (D91).
+		if not tipShown and not camSwitched and os.clock() >= bannerUntil then
 			tipShown = true
 			local other = if ClientState.camMode == "third" then "top-down" else "third-person"
 			viewTip.Text = if isTouch
-				then `Tip: tap {if ClientState.camMode == "third" then "TOP" else "3RD"} for the {other} view`
+				then `Tip: tap {if ClientState.camMode == "third" then "TOP" else "3RD"} to switch view`
 				else `Tip: press V for the {other} view`
 			viewTip.Visible = true
 			task.delay(10, function()
@@ -1066,6 +1119,11 @@ function Hud.init(aimTouchActive)
 	buildControls()
 	buildWallet()
 	buildBoss()
+	-- Lay out now and whenever the screen changes (rotation, window resize, top bar).
+	applyLayout()
+	boardGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(applyLayout)
+	gui:GetPropertyChangedSignal("AbsolutePosition"):Connect(applyLayout)
+	boardGui:GetPropertyChangedSignal("AbsolutePosition"):Connect(applyLayout)
 
 	ClientState.actions.pick = Hud.pick
 
