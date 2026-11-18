@@ -248,7 +248,8 @@ Config.Weapons = {
 	},
 	shieldgen = { passive = true, hp = 60, hpPerRank = 30, arcDegrees = 120, regenDelay = 4, regenPerSecond = 0.25 }, -- front shield, blocks direct hits; never fires
 }
-Config.RicochetCode = 4 -- a bounced Blaster shot (orange)
+Config.RicochetCode = 4 -- a Blaster shot with Ricochet (orange), leaving the gun
+Config.RicochetBounceCode = 9 -- the same shot after it bounces: starts where it hit, not at the gun
 Config.Ricochet = { range = 20, damageFactor = 0.5 }
 
 Config.Skills = {

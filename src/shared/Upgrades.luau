@@ -59,7 +59,7 @@ local list: { Def } = {
 	-- The anti-bullying tool (D42): available from the first pick, boosted for new players.
 	{ id = "skl_earthwall", name = "Earth Wall", category = "Skill", rarity = "Rare", weight = 3, max = 3, minLevel = 2, tags = { "sustain" }, text = "Raise a wall that blocks bullets and robots. 14 s cooldown", earlyBoost = 2 },
 
-	{ id = "mod_ricochet", name = "Ricochet", category = "Modifier", rarity = "Epic", weight = 3, max = 1, minLevel = 10, tags = { "offense", "primary" }, text = "Main-gun hits bounce once at 50% damage", requiresTag = "projectile_primary", excludes = { "var_laser" } },
+	{ id = "mod_ricochet", name = "Ricochet", category = "Modifier", rarity = "Epic", weight = 3, max = 1, minLevel = 10, tags = { "offense", "primary" }, text = "Main-gun hits bounce once at 50% damage", requiresTag = "blaster_primary", excludes = { "var_laser" } }, -- not Bombard: rockets splash and never bounce
 	{ id = "mod_spread", name = "Spreader Choke", category = "Modifier", rarity = "Epic", weight = 3, max = 1, minLevel = 6, tags = { "offense", "primary" }, text = "Barrels fan out like a shotgun: +25% damage, -30% range", requiresTag = "projectile_primary", requires = { stat_barrels = 1 } },
 	-- Rare main-weapon variants (D67): Epic, from Lv 10, one per life, lost on death.
 	{ id = "var_laser", name = "Laser Gun", category = "Modifier", rarity = "Epic", weight = 2, max = 1, minLevel = 10, tags = { "offense", "primary" }, text = "Your blaster becomes a laser beam that never stops firing", requiresTag = "blaster_primary", excludes = { "mod_ricochet" }, primary = { kind = "beam", weapon = "laser" } },

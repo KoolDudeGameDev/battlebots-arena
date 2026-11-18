@@ -47,4 +47,17 @@ return function(test)
 		assert(not offered(build("rookie", { var_laser = 1 }), "mod_ricochet"))
 		assert(not offered(build("rookie", { mod_ricochet = 1 }), "var_laser"))
 	end)
+
+	test("Ricochet is Rookie only (rockets splash, they never bounce)", function()
+		assert(offered(build("rookie"), "mod_ricochet"))
+		assert(not offered(build("bombard"), "mod_ricochet"), "a dead card on Bombard")
+	end)
+
+	test("a bounced shot has its own code, apart from the gun's orange shot", function()
+		local bounce = Config.RicochetBounceCode
+		assert(type(bounce) == "number" and bounce ~= Config.RicochetCode)
+		for id, w in Config.Weapons do
+			assert(w.code ~= bounce and w.code ~= Config.RicochetCode, "code taken by " .. id)
+		end
+	end)
 end

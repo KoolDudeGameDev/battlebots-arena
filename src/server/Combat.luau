@@ -27,6 +27,7 @@ local Combat = {}
 
 local W = Config.Weapons
 local RICOCHET_CODE = Config.RicochetCode
+local RICOCHET_BOUNCE_CODE = Config.RicochetBounceCode
 local SPAWN_RECORD = 37 -- bytes per projectile in the spawn buffer
 local SPAWN_PER_PACKET = 24 -- 24 * 37 = 888 bytes, under the 1000-byte unreliable limit
 local END_PER_PACKET = 200
@@ -692,7 +693,7 @@ local function ricochet(p: Projectile, owner: World.Entity, x: number, z: number
 	local tx, tz = nearestTarget(owner.id, x, z, R.range, true, hitEntity, hitCrate)
 	if tx and tz then
 		local angle = math.atan2(tz - z, tx - x)
-		spawnProjectile(owner, x, z, angle, p.speed, R.range + 5, p.damage * R.damageFactor, p.radius, RICOCHET_CODE, {
+		spawnProjectile(owner, x, z, angle, p.speed, R.range + 5, p.damage * R.damageFactor, p.radius, RICOCHET_BOUNCE_CODE, {
 			bounced = true,
 			skipEntity = hitEntity,
 			skipCrate = hitCrate,

@@ -25,7 +25,7 @@ export type Chassis = {
 	small: { speed: number, size: number, mass: number, armor: number, primary: Primary? }?, -- Bomber's form after detonating (D70, D84)
 	skill: string?, -- a built-in skill the robot starts with and can't swap (Bomber's bomb)
 	primary: Primary?,
-	tags: { string }, -- gate upgrades, e.g. Ricochet needs "projectile_primary"
+	tags: { string }, -- gate upgrades, e.g. Extra Barrel needs "projectile_primary"
 	blurb: string,
 	comingSoon: boolean?,
 }
