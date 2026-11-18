@@ -135,7 +135,6 @@ function Match.refreshStats(e: World.Entity)
 		-- Shown to everyone as a disc (hitbox) and a faint ring (attack range).
 		model:SetAttribute("HitRadius", e.stats.hitRadius)
 		model:SetAttribute("AttackRange", attackRange(e))
-		model:SetAttribute("Ricochet", (e.build.stacks.mod_ricochet or 0) > 0)
 		model:SetAttribute("Scavenger", (e.build.stacks.mod_scavenger or 0) > 0)
 		Combat.syncHp(e)
 	end
@@ -746,13 +745,11 @@ local function pushState(e: World.Entity)
 		maxHp = e.stats.maxHp,
 		comeback = comeback,
 		skill = e.build.skill,
-		skillRank = e.build.skillRank,
 		skillReadyAt = e.skillReadyAt,
 		skillCooldown = skillCooldown(e),
 		skillAlias = if e.build.small then "Boost" else nil, -- the Bomber core's Space (D84)
 		offer = offer,
 		pending = e.pendingOffers,
-		mounts = e.build.mounts,
 		-- Garage (D73): the saved coins and robots.
 		coins = if saved then saved.coins else 0,
 		owned = if saved then saved.owned else { rookie = true },

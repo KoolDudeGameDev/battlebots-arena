@@ -74,6 +74,30 @@ Config.Presentation = {
 		bomber = { slide = 0.4, climb = 10, settle = 0.6 },
 		default = { slide = 0.2, climb = 1, settle = 0.1 },
 	},
+	-- Animation timing (D94, RobotMotion): saw spin-up, Scorcher heat, hammer smash,
+	-- Flipper kick, Null Field opening.
+	motion = {
+		sawAttackSpin = 32, -- radians per second while attacking
+		sawIdleSpin = 3,
+		sawEase = 4, -- how fast it spins up or down (per second)
+		heatUp = 1.2, -- heat per second while firing (0-1)
+		heatDown = 0.5,
+		smashRestDegrees = 100, -- held upright in front at rest
+		smashLiftDegrees = 130, -- lifted back before the slam
+		smashLiftTime = 0.1, -- seconds into the smash: fully lifted
+		smashSlamTime = 0.2, -- on the ground (the server's windup)
+		smashHoldTime = 0.35, -- starts rising back
+		smashRestTime = 0.85, -- back at rest
+		flipDegrees = 70,
+		flipUpTime = 0.1,
+		flipDownTime = 0.5,
+		fieldOpenTime = 0.3,
+		sideSawSpin = 25, -- the Vertical Saw, radians per second, always
+		aimEase = 15, -- how fast other robots' turrets follow their broadcast aim
+		mountEase = 14, -- how fast a mount swings to its target
+		mountKickTime = 0.15, -- seconds a mount's recoil takes to settle
+		mountKickDistance = 0.3, -- studs a mount kicks back per shot
+	},
 	smokeBelow = 0.35, -- HP fraction where a damaged robot starts to smoke
 	sparksBelow = 0.15, -- and where it also throws sparks
 }

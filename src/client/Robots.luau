@@ -13,6 +13,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local ClientState = require(script.Parent.ClientState)
 local Sfx = require(script.Parent.Sfx)
+local RobotMotion = require(Shared.RobotMotion)
 
 local Robots = {}
 
@@ -86,7 +87,6 @@ local views: { [Model]: View } = {}
 local sawBase: { [Motor6D]: CFrame } = {} -- each saw's resting C0
 local SMASH_HUBS = { "SmashHub" } -- the Sledgehammer main weapon
 local FLAME_PARTS = { "Flame", "FlameCore", "FlameEmbers", "FlameSmoke", "FlameLight" } -- on the Scorcher's Nozzle (D88)
-local SMASH_REST, SMASH_LIFT = math.rad(100), math.rad(130) -- upright in front, then lifted back (D80)
 setmetatable(sawBase :: any, { __mode = "k" }) -- forget saws that were rebuilt
 
 local function bandColor(level: number): Color3
@@ -568,6 +568,386 @@ function Robots.mountShot(entityId: number, weapon: string, angle: number): Vect
 	return nil
 end
 
+-- Animators (D94) ---------------------------------------------------------------
+-- Each robot feature animates itself from one frame's facts. RobotMotion holds the
+-- timing curves (tested in Lune); these apply them to parts. Order matters where two
+-- share state: the saw and the Battle Axe both turn v.spin.
+
+type AnimFrame = {
+	v: View,
+	model: Model,
+	root: BasePart,
+	body: Instance?,
+	rig: Rig?,
+	attacking: boolean,
+	scale: number,
+	lift: number,
+	dt: number,
+	me: Model?,
+	myRoot: BasePart?,
+}
+
+local MOTION = PRES.motion
+
+-- A cosmetic part in the effects folder: anchored, no collision, no shadow.
+local function ghostPart(shape: Enum.PartType, material: Enum.Material, color: Color3, transparency: number): Part
+	local p = Instance.new("Part")
+	p.Shape = shape
+	p.Material = material
+	p.Color = color
+	p.Transparency = transparency
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	return p
+end
+
+-- An effect part that exists only while `on`: made by `make`, destroyed after.
+local function marker(v: View, key: string, on: boolean, make: () -> Part): Part?
+	local p = (v :: any)[key] :: Part?
+	if on and not p then
+		local made = make()
+		made.Parent = fxFolder
+		;(v :: any)[key] = made
+		return made
+	elseif not on and p then
+		p:Destroy()
+		;(v :: any)[key] = nil
+		return nil
+	end
+	return p
+end
+
+-- With up to 20 robots, an enemy's range ring only shows once you are near its edge,
+-- so the ground never fills up with circles.
+local function rangeRing(f: AnimFrame)
+	local range = f.model:GetAttribute("AttackRange") or 0
+	if f.model == f.me then
+		f.v.rangeRing.Visible = range > 0
+	elseif f.myRoot then
+		local d = (f.root.Position - (f.myRoot :: BasePart).Position).Magnitude
+		f.v.rangeRing.Visible = range > 0 and d < range + RING_SHOW_MARGIN
+	else
+		f.v.rangeRing.Visible = false
+	end
+end
+
+-- Aim: your own follows your aim instantly; others ease toward the 10 Hz angles the
+-- server rebroadcasts.
+local function aim(f: AnimFrame)
+	local v = f.v
+	local userId = f.model:GetAttribute("UserId") or 0
+	local target = if f.model == player.Character then ClientState.localAim else ClientState.aims[userId]
+	if target then
+		v.angle = if f.model == player.Character or not v.hasAim then target else shortestLerp(v.angle, target, math.min(1, f.dt * MOTION.aimEase))
+		v.hasAim = true
+	end
+end
+
+-- Third-person clarity (D72): your own name tag is hidden (the HUD shows it) and your
+-- big weapons fade so they never block the view ahead.
+local function viewFade(f: AnimFrame)
+	local v = f.v
+	local third = f.model == f.me and ClientState.camMode == "third"
+	v.gui.Enabled = not third
+	local body = f.body
+	if body and v.fadeBody ~= body then
+		v.fadeBody = body
+		v.fadeParts = {}
+		for _, d in body:GetDescendants() do
+			if d:IsA("BasePart") and d:GetAttribute("ViewFade") then
+				table.insert(v.fadeParts, d)
+			end
+		end
+	end
+	for _, part in v.fadeParts do
+		part.LocalTransparencyModifier = if third then 0.8 else 0
+	end
+end
+
+-- Turret and mounted weapons (D78): they turn toward the aim, but only within a
+-- 180-degree arc in front of the hull. The hull turns to cover the rest
+-- (InputController), so the guns never point through it.
+local function swivels(f: AnimFrame)
+	local rig = f.rig
+	if not rig then
+		return
+	end
+	local rel = if f.v.hasAim then relAngle(f.root, f.v.angle) else 0
+	local turn = CFrame.Angles(0, rel, 0)
+	for _, m in rig.yaw do
+		m.C0 = baseOf(m) * turn
+	end
+	-- Mounts (D82): face their last shot for a moment, then ease back to the aim.
+	local clock = os.clock()
+	for _, m in rig.mounts do
+		local want = if clock < m.aimUntil then relAngle(f.root, m.aimAngle) else rel
+		m.rel += (want - m.rel) * math.min(1, f.dt * MOTION.mountEase)
+		m.kick = math.max(0, m.kick - f.dt / MOTION.mountKickTime)
+		m.motor.C0 = baseOf(m.motor) * CFrame.Angles(0, m.rel, 0) * CFrame.new(0, 0, m.kick * m.kick * MOTION.mountKickDistance * f.scale)
+	end
+end
+
+-- Recoil (D78): each shot slides the gun back and lifts the muzzle, then it settles.
+-- The Scorcher's nozzle shudders under pressure instead.
+local function recoil(f: AnimFrame)
+	local rig, v = f.rig, f.v
+	local gun = rig and rig.gun
+	local gp = rig and rig.gunPart
+	if not (gun and gp) then
+		return
+	end
+	local settle = gp:GetAttribute("Settle") or 0.1
+	v.kick = math.max(0, v.kick - f.dt / settle)
+	local k = v.kick * v.kick
+	local shudder = if f.attacking and f.model:GetAttribute("Chassis") == "scorcher" then (math.random() - 0.5) * 0.06 else 0
+	gun.C0 = baseOf(gun) * CFrame.new(shudder, shudder, k * (gp:GetAttribute("Slide") or 0) * f.scale) * CFrame.Angles(k * (gp:GetAttribute("Climb") or 0), 0, 0)
+end
+
+-- Heat (the Scorcher's nozzle bands and exhaust tips): glows while firing, cools after.
+local function heat(f: AnimFrame)
+	local rig, v = f.rig, f.v
+	if not rig or #rig.heat == 0 then
+		return
+	end
+	v.heat = RobotMotion.heat(MOTION, v.heat, f.attacking, f.dt)
+	local c = HEAT_COLD:Lerp(HEAT_HOT, v.heat)
+	for _, part in rig.heat do
+		part.Color = c
+		part.Material = if v.heat > 0.15 or part.Name == "NozzleTip" or part.Name == "StackTip" then Enum.Material.Neon else Enum.Material.Metal
+	end
+end
+
+-- Blinking lamps: antenna tips, beacons, the Bomber's fuse and core.
+local function blink(f: AnimFrame)
+	local rig = f.rig
+	if not rig then
+		return
+	end
+	local t = os.clock()
+	for _, part in rig.blink do
+		part.Transparency = if RobotMotion.blinkOn(t, part:GetAttribute("Blink") or 1) then 0 else 0.7
+	end
+end
+
+-- The flamethrower roars while attacking.
+local function flameSound(f: AnimFrame)
+	local loop = f.rig and f.rig.flameLoop
+	if loop and loop.Playing ~= f.attacking then
+		loop.Playing = f.attacking
+	end
+end
+
+-- Saw: spins up when attacking and winds down after (it never snaps); its scream follows.
+local function saw(f: AnimFrame)
+	local part = f.body and f.body:FindFirstChild("Saw")
+	local motor = part and part:FindFirstChild("SawMotor") :: Motor6D?
+	if not motor then
+		return
+	end
+	local v = f.v
+	v.sawRate = RobotMotion.sawRate(MOTION, v.sawRate, f.attacking, f.dt)
+	v.spin += f.dt * v.sawRate
+	motor.C0 = baseOf(motor) * CFrame.Angles(v.spin, 0, 0)
+	local loop = f.rig and f.rig.sawLoop
+	if loop then
+		if not loop.Playing then
+			loop.Playing = true
+		end
+		loop.Volume, loop.PlaybackSpeed = RobotMotion.sawSound(MOTION, v.sawRate)
+	end
+end
+
+-- Battle Axe: a full 360 sweep round the robot per swing while attacking (D71).
+local function axe(f: AnimFrame)
+	local swing = f.body and f.body:FindFirstChild("Swing")
+	local motor = swing and swing:FindFirstChild("SwingMotor") :: Motor6D?
+	if not (swing and motor) then
+		return
+	end
+	if f.attacking then
+		f.v.spin += f.dt * (swing:GetAttribute("SwingRate") or 1) * 2 * math.pi
+	end
+	motor.C0 = baseOf(motor) * CFrame.Angles(0, -f.v.spin, 0) -- clockwise seen from above: the blade's edge leads (D83)
+end
+
+-- Vertical Saw on the back: always spinning.
+local function sideSaw(f: AnimFrame)
+	local part = f.body and f.body:FindFirstChild("SideSaw")
+	local motor = part and part:FindFirstChild("SideSawMotor") :: Motor6D?
+	if not motor then
+		return
+	end
+	f.v.sideSpin += f.dt * MOTION.sideSawSpin
+	motor.C0 = baseOf(motor) * CFrame.Angles(f.v.sideSpin, 0, 0)
+end
+
+-- Sledgehammer (D80): each new smash (its counter attribute ticks up) replays the
+-- RobotMotion smash curve; at rest it stands upright in front.
+local function hammer(f: AnimFrame)
+	for _, hubName in SMASH_HUBS do
+		local hub = f.body and f.body:FindFirstChild(hubName)
+		local motor = hub and hub:FindFirstChild(hubName .. "Motor") :: Motor6D?
+		if not (hub and motor) then
+			continue
+		end
+		local counter = hub:GetAttribute("SmashCounter") or ""
+		local st = f.v.smash[hubName]
+		if not st then
+			st = { last = f.model:GetAttribute(counter) or 0, t = math.huge }
+			f.v.smash[hubName] = st
+		end
+		local n = f.model:GetAttribute(counter) or 0
+		if n ~= st.last then
+			st.last, st.t = n, 0
+		end
+		st.t += f.dt
+		motor.C0 = baseOf(motor) * CFrame.Angles(RobotMotion.smashAngle(MOTION, st.t), 0, 0)
+	end
+end
+
+-- Shield Generator: the barrier fades as the front shield wears down.
+local function guardShield(f: AnimFrame)
+	local guard = f.body and f.body:FindFirstChild("GuardShield") :: BasePart?
+	if guard then
+		local g = f.model:GetAttribute("Guard") or 0
+		guard.Transparency = if g > 0 then 0.15 + 0.6 * (1 - g) else 1
+	end
+end
+
+-- Flamethrower (D88): the jet, its core, embers, smoke and glow all go together; the
+-- pilot flame hides inside the jet; the light flickers.
+local function flame(f: AnimFrame)
+	local nozzle = f.body and f.body:FindFirstChild("Nozzle")
+	local jet = nozzle and nozzle:FindFirstChild("Flame") :: ParticleEmitter?
+	if not (jet and nozzle) then
+		return
+	end
+	if jet.Enabled ~= f.attacking then
+		for _, name in FLAME_PARTS do
+			local fx = nozzle:FindFirstChild(name)
+			if fx then
+				(fx :: any).Enabled = f.attacking
+			end
+		end
+		local pilot = nozzle:FindFirstChild("PilotLight") :: ParticleEmitter?
+		if pilot then
+			pilot.Enabled = not f.attacking
+		end
+	end
+	local glow = nozzle:FindFirstChild("FlameLight") :: PointLight?
+	if glow and f.attacking then
+		glow.Brightness = 2.4 + math.random() * 1.4 -- flicker
+	end
+end
+
+-- Shield Pulse: a force-field bubble round the robot.
+local function shieldBubble(f: AnimFrame)
+	local b = marker(f.v, "bubble", f.model:GetAttribute("Shield") == true, function()
+		return ghostPart(Enum.PartType.Ball, Enum.Material.ForceField, Color3.fromRGB(140, 220, 255), 0)
+	end)
+	if b then
+		b.Size = Vector3.one * 9 * f.scale
+		b.CFrame = CFrame.new(f.root.Position + Vector3.new(0, f.lift, 0))
+	end
+end
+
+-- Bomber net: a brown mesh over a netted robot (D70).
+local function net(f: AnimFrame)
+	local n = marker(f.v, "net", f.model:GetAttribute("Netted") == true, function()
+		return ghostPart(Enum.PartType.Ball, Enum.Material.Fabric, Color3.fromRGB(150, 120, 80), 0.55)
+	end)
+	if n then
+		n.Size = Vector3.one * 7 * f.scale
+		n.CFrame = CFrame.new(f.root.Position + Vector3.new(0, f.lift, 0))
+	end
+end
+
+-- Flipped (D72): a spinning yellow ring over the stunned robot.
+local function stunRing(f: AnimFrame)
+	local st = marker(f.v, "stars", f.model:GetAttribute("Flipped") == true, function()
+		return ghostPart(Enum.PartType.Cylinder, Enum.Material.Neon, Color3.fromRGB(255, 220, 60), 0.3)
+	end)
+	if st then
+		st.Size = Vector3.new(0.2, 3.5 * f.scale, 3.5 * f.scale)
+		st.CFrame = CFrame.new(f.root.Position + Vector3.new(0, 4 * f.scale + f.lift, 0)) * CFrame.Angles(0, os.clock() * 6, math.rad(90))
+	end
+end
+
+-- Flipper plate: kicks up on each flip, then settles.
+local function flipper(f: AnimFrame)
+	local hub = f.body and f.body:FindFirstChild("FlipperHub")
+	local motor = hub and hub:FindFirstChild("FlipperHubMotor") :: Motor6D?
+	if not motor then
+		return
+	end
+	local v = f.v
+	local flips = f.model:GetAttribute("Flips") or 0
+	if flips ~= v.lastFlips then
+		v.lastFlips, v.flipT = flips, 0
+	end
+	v.flipT += f.dt
+	motor.C0 = baseOf(motor) * CFrame.Angles(RobotMotion.flipAngle(MOTION, v.flipT), 0, 0)
+end
+
+-- Null Field (D68, D82): a huge force-field dome over the robot, as big as the field
+-- (it grows with the skill's rank). It swells open, then holds.
+local function nullField(f: AnimFrame)
+	local v = f.v
+	local fieldR = f.model:GetAttribute("Field")
+	local on = type(fieldR) == "number" and fieldR > 0
+	local dome = marker(v, "field", on, function()
+		local d = ghostPart(Enum.PartType.Ball, Enum.Material.ForceField, Color3.fromRGB(170, 110, 255), 0)
+		d.Size = Vector3.one
+		local edge = Instance.new("CylinderHandleAdornment")
+		edge.Name = "Edge"
+		edge.Adornee = d
+		edge.Height = 0.15
+		edge.CFrame = CFrame.new(0, 0.1, 0) * CFrame.Angles(math.rad(90), 0, 0)
+		edge.Color3 = Color3.fromRGB(200, 150, 255)
+		edge.Transparency = 0.25
+		edge.Parent = d
+		v.fieldT = 0
+		return d
+	end)
+	if dome and type(fieldR) == "number" then
+		v.fieldT += f.dt
+		local r = math.max(0.5, fieldR * RobotMotion.fieldOpen(MOTION, v.fieldT))
+		dome.Size = Vector3.one * r * 2
+		dome.CFrame = CFrame.new(f.root.Position.X, 0, f.root.Position.Z) -- centred on the ground: a dome
+		local edge = dome:FindFirstChild("Edge") :: CylinderHandleAdornment?
+		if edge then -- a bright ring where the dome meets the ground
+			edge.Radius = r
+			edge.InnerRadius = math.max(0, r - 0.5)
+		end
+	end
+end
+
+-- Every frame, in this order.
+local ANIMATORS: { (f: AnimFrame) -> () } = {
+	rangeRing,
+	aim,
+	viewFade,
+	swivels,
+	recoil,
+	heat,
+	blink,
+	flameSound,
+	saw,
+	axe,
+	sideSaw,
+	hammer,
+	guardShield,
+	flame,
+	shieldBubble,
+	net,
+	stunRing,
+	flipper,
+	nullField,
+}
+
 function Robots.init(folder: Folder)
 	fxFolder = folder
 	ClientState.actions.kick = Robots.kick
@@ -585,6 +965,8 @@ function Robots.init(folder: Folder)
 		end
 	end)
 
+	-- One frame table, refilled for each robot (no garbage per robot per frame).
+	local frame = {} :: AnimFrame
 	RunService.RenderStepped:Connect(function(dt)
 		local me = player.Character
 		local myRoot = me and me.PrimaryPart
@@ -594,339 +976,17 @@ function Robots.init(folder: Folder)
 				continue
 			end
 			local scale = model:GetAttribute("VisualScale") or 1
-			local lift = (scale - 1) * Config.Robot.BodyLift
-
-			-- With up to 20 robots, an enemy's range ring only shows once you are
-			-- near its edge, so the ground never fills up with circles.
-			local range = model:GetAttribute("AttackRange") or 0
-			if model == me then
-				v.rangeRing.Visible = range > 0
-			elseif myRoot then
-				local d = (root.Position - myRoot.Position).Magnitude
-				v.rangeRing.Visible = range > 0 and d < range + RING_SHOW_MARGIN
-			else
-				v.rangeRing.Visible = false
-			end
-
-			-- Turret: your own follows your aim instantly; others ease toward the
-			-- 10 Hz angles the server rebroadcasts.
-			local userId = model:GetAttribute("UserId") or 0
-			local target = if model == player.Character then ClientState.localAim else ClientState.aims[userId]
-			if target then
-				v.angle = if model == player.Character or not v.hasAim then target else shortestLerp(v.angle, target, math.min(1, dt * 15))
-				v.hasAim = true
-			end
 			local body = model:FindFirstChild("Body")
-			-- Third-person clarity (D72): your own name tag is hidden (the HUD shows it)
-			-- and your big weapons fade so they never block the view ahead.
-			local third = model == me and ClientState.camMode == "third"
-			v.gui.Enabled = not third
-			if body and v.fadeBody ~= body then
-				v.fadeBody = body
-				v.fadeParts = {}
-				for _, d in body:GetDescendants() do
-					if d:IsA("BasePart") and d:GetAttribute("ViewFade") then
-						table.insert(v.fadeParts, d)
-					end
-				end
-			end
-			for _, part in v.fadeParts do
-				part.LocalTransparencyModifier = if third then 0.8 else 0
-			end
 			if body and v.rigBody ~= body then
 				v.rigBody = body
 				v.rig = scan(body)
 			end
-			local rig = v.rig
-			local attacking = model:GetAttribute("Firing") == true
-
-			-- Turret and mounted weapons (D78): they turn toward the aim, but only
-			-- within a 180-degree arc in front of the hull. The hull turns to cover
-			-- the rest (InputController), so the guns never point through it.
-			if rig then
-				local rel = if v.hasAim then relAngle(root, v.angle) else 0
-				local turn = CFrame.Angles(0, rel, 0)
-				for _, m in rig.yaw do
-					m.C0 = baseOf(m) * turn
-				end
-				-- Mounts (D82): face their last shot for a moment, then ease back to the aim.
-				local clock = os.clock()
-				for _, m in rig.mounts do
-					local want = if clock < m.aimUntil then relAngle(root, m.aimAngle) else rel
-					m.rel += (want - m.rel) * math.min(1, dt * 14)
-					m.kick = math.max(0, m.kick - dt / 0.15)
-					m.motor.C0 = baseOf(m.motor) * CFrame.Angles(0, m.rel, 0) * CFrame.new(0, 0, m.kick * m.kick * 0.3 * scale)
-				end
-			end
-
-			-- Recoil (D78): each shot slides the gun back and lifts the muzzle, then it
-			-- settles. The Scorcher's nozzle shudders under pressure instead.
-			if rig and rig.gun and rig.gunPart then
-				local gp = rig.gunPart
-				local settle = gp:GetAttribute("Settle") or 0.1
-				v.kick = math.max(0, v.kick - dt / settle)
-				local k = v.kick * v.kick
-				local shudder = if attacking and model:GetAttribute("Chassis") == "scorcher" then (math.random() - 0.5) * 0.06 else 0
-				rig.gun.C0 = baseOf(rig.gun) * CFrame.new(shudder, shudder, k * (gp:GetAttribute("Slide") or 0) * scale) * CFrame.Angles(k * (gp:GetAttribute("Climb") or 0), 0, 0)
-			end
-
-			-- Heat (Scorcher's nozzle bands and exhaust tips): glows while firing, cools after.
-			if rig and #rig.heat > 0 then
-				v.heat = math.clamp(v.heat + dt * (if attacking then 1.2 else -0.5), 0, 1)
-				local c = HEAT_COLD:Lerp(HEAT_HOT, v.heat)
-				for _, part in rig.heat do
-					part.Color = c
-					part.Material = if v.heat > 0.15 or part.Name == "NozzleTip" or part.Name == "StackTip" then Enum.Material.Neon else Enum.Material.Metal
-				end
-			end
-
-			-- Blinking lamps: antenna tips, beacons, the Bomber's fuse and core.
-			if rig then
-				local t = os.clock()
-				for _, part in rig.blink do
-					local hz = part:GetAttribute("Blink") or 1
-					part.Transparency = if (t * hz) % 1 < 0.5 then 0 else 0.7
-				end
-			end
-
-			-- Attack loops: the flamethrower roars and the saw screams while attacking.
-			if rig and rig.flameLoop then
-				local on = attacking
-				if rig.flameLoop.Playing ~= on then
-					rig.flameLoop.Playing = on
-				end
-			end
-
-			-- Saw: spins up when attacking and winds down after (it never snaps).
-			local saw = body and body:FindFirstChild("Saw")
-			local sawMotor = saw and saw:FindFirstChild("SawMotor") :: Motor6D?
-			if sawMotor then
-				v.sawRate += ((if attacking then 32 else 3) - v.sawRate) * math.min(1, dt * 4)
-				v.spin += dt * v.sawRate
-				sawMotor.C0 = baseOf(sawMotor) * CFrame.Angles(v.spin, 0, 0)
-				if rig and rig.sawLoop then
-					if not rig.sawLoop.Playing then
-						rig.sawLoop.Playing = true
-					end
-					rig.sawLoop.Volume = 0.08 + 0.32 * (v.sawRate / 32)
-					rig.sawLoop.PlaybackSpeed = 0.7 + 0.4 * (v.sawRate / 32)
-				end
-			end
-			-- Battle Axe: a full 360 sweep round the robot per swing while attacking (D71).
-			local swing = body and body:FindFirstChild("Swing")
-			local swingMotor = swing and swing:FindFirstChild("SwingMotor") :: Motor6D?
-			if swing and swingMotor then
-				local base = sawBase[swingMotor]
-				if not base then
-					base = swingMotor.C0
-					sawBase[swingMotor] = base
-				end
-				if attacking then
-					v.spin += dt * (swing:GetAttribute("SwingRate") or 1) * 2 * math.pi
-				end
-				swingMotor.C0 = base * CFrame.Angles(0, -v.spin, 0) -- clockwise seen from above: the blade's edge leads (D83)
-			end
-			-- Vertical Saw on the back: always spinning.
-			local sideSaw = body and body:FindFirstChild("SideSaw")
-			local sideMotor = sideSaw and sideSaw:FindFirstChild("SideSawMotor") :: Motor6D?
-			if sideMotor then
-				local base = sawBase[sideMotor]
-				if not base then
-					base = sideMotor.C0
-					sawBase[sideMotor] = base
-				end
-				v.sideSpin += dt * 25
-				sideMotor.C0 = base * CFrame.Angles(v.sideSpin, 0, 0)
-			end
-			-- Sledgehammer (D80): held upright in front at rest (SMASH_REST); each smash
-			-- lifts it a little further back in 0.1 s, slams it onto the ground in front
-			-- by 0.2 s (the server's windup), holds, then raises it back to rest.
-			for _, hubName in SMASH_HUBS do
-				local hub = body and body:FindFirstChild(hubName)
-				local hubMotor = hub and hub:FindFirstChild(hubName .. "Motor") :: Motor6D?
-				if hub and hubMotor then
-					local base = sawBase[hubMotor]
-					if not base then
-						base = hubMotor.C0
-						sawBase[hubMotor] = base
-					end
-					local counter = hub:GetAttribute("SmashCounter") or ""
-					local st = v.smash[hubName]
-					if not st then
-						st = { last = model:GetAttribute(counter) or 0, t = math.huge }
-						v.smash[hubName] = st
-					end
-					local n = model:GetAttribute(counter) or 0
-					if n ~= st.last then
-						st.last, st.t = n, 0
-					end
-					st.t += dt
-					local t = st.t
-					local a = if t < 0.1
-						then SMASH_REST + (SMASH_LIFT - SMASH_REST) * math.sin(t / 0.1 * math.pi / 2)
-						elseif t < 0.2 then SMASH_LIFT * (1 - ((t - 0.1) / 0.1) ^ 2)
-						elseif t < 0.35 then 0
-						elseif t < 0.85 then SMASH_REST * ((t - 0.35) / 0.5)
-						else SMASH_REST
-					hubMotor.C0 = base * CFrame.Angles(a, 0, 0)
-				end
-			end
-			local guard = body and body:FindFirstChild("GuardShield") :: BasePart?
-			if guard then
-				local g = model:GetAttribute("Guard") or 0
-				guard.Transparency = if g > 0 then 0.15 + 0.6 * (1 - g) else 1
-			end
-			local nozzle = body and body:FindFirstChild("Nozzle")
-			local flame = nozzle and nozzle:FindFirstChild("Flame") :: ParticleEmitter?
-			if flame and nozzle then
-				if flame.Enabled ~= attacking then
-					-- The jet, its core, embers, smoke and glow all go together (D88).
-					for _, name in FLAME_PARTS do
-						local fx = nozzle:FindFirstChild(name)
-						if fx then
-							(fx :: any).Enabled = attacking
-						end
-					end
-					local pilot = nozzle:FindFirstChild("PilotLight") :: ParticleEmitter?
-					if pilot then
-						pilot.Enabled = not attacking -- the pilot flame hides inside the jet
-					end
-				end
-				local glow = nozzle:FindFirstChild("FlameLight") :: PointLight?
-				if glow and attacking then
-					glow.Brightness = 2.4 + math.random() * 1.4 -- flicker
-				end
-			end
-
-			-- Shield bubble
-			local shielded = model:GetAttribute("Shield") == true
-			if shielded and not v.bubble then
-				local b = Instance.new("Part")
-				b.Shape = Enum.PartType.Ball
-				b.Material = Enum.Material.ForceField
-				b.Color = Color3.fromRGB(140, 220, 255)
-				b.Anchored = true
-				b.CanCollide = false
-				b.CanQuery = false
-				b.CanTouch = false
-				b.CastShadow = false
-				b.Parent = fxFolder
-				v.bubble = b
-			elseif not shielded and v.bubble then
-				v.bubble:Destroy()
-				v.bubble = nil
-			end
-			if v.bubble then
-				v.bubble.Size = Vector3.one * 9 * scale
-				v.bubble.CFrame = CFrame.new(root.Position + Vector3.new(0, lift, 0))
-			end
-
-			-- Bomber net: a brown mesh over a netted robot (D70).
-			local netted = model:GetAttribute("Netted") == true
-			if netted and not v.net then
-				local n = Instance.new("Part")
-				n.Shape = Enum.PartType.Ball
-				n.Material = Enum.Material.Fabric
-				n.Color = Color3.fromRGB(150, 120, 80)
-				n.Transparency = 0.55
-				n.Anchored = true
-				n.CanCollide = false
-				n.CanQuery = false
-				n.CanTouch = false
-				n.CastShadow = false
-				n.Parent = fxFolder
-				v.net = n
-			elseif not netted and v.net then
-				v.net:Destroy()
-				v.net = nil
-			end
-			if v.net then
-				v.net.Size = Vector3.one * 7 * scale
-				v.net.CFrame = CFrame.new(root.Position + Vector3.new(0, lift, 0))
-			end
-
-			-- Flipped (D72): a spinning yellow ring over the stunned robot.
-			local flipped = model:GetAttribute("Flipped") == true
-			if flipped and not v.stars then
-				local st = Instance.new("Part")
-				st.Shape = Enum.PartType.Cylinder
-				st.Material = Enum.Material.Neon
-				st.Color = Color3.fromRGB(255, 220, 60)
-				st.Transparency = 0.3
-				st.Anchored = true
-				st.CanCollide = false
-				st.CanQuery = false
-				st.CanTouch = false
-				st.CastShadow = false
-				st.Parent = fxFolder
-				v.stars = st
-			elseif not flipped and v.stars then
-				v.stars:Destroy()
-				v.stars = nil
-			end
-			if v.stars then
-				v.stars.Size = Vector3.new(0.2, 3.5 * scale, 3.5 * scale)
-				v.stars.CFrame = CFrame.new(root.Position + Vector3.new(0, 4 * scale + lift, 0)) * CFrame.Angles(0, os.clock() * 6, math.rad(90))
-			end
-			-- Flipper plate kicks up on each flip, then settles.
-			local flipHub = body and body:FindFirstChild("FlipperHub")
-			local flipMotor = flipHub and flipHub:FindFirstChild("FlipperHubMotor") :: Motor6D?
-			if flipMotor then
-				local base = sawBase[flipMotor]
-				if not base then
-					base = flipMotor.C0
-					sawBase[flipMotor] = base
-				end
-				local flips = model:GetAttribute("Flips") or 0
-				if flips ~= v.lastFlips then
-					v.lastFlips, v.flipT = flips, 0
-				end
-				v.flipT += dt
-				local up = if v.flipT < 0.1 then v.flipT / 0.1 elseif v.flipT < 0.5 then 1 - (v.flipT - 0.1) / 0.4 else 0
-				flipMotor.C0 = base * CFrame.Angles(math.rad(70) * up, 0, 0)
-			end
-
-			-- Null Field (D68, D82): a huge force-field dome over the robot, as big as the
-			-- field (it grows with the skill's rank). It swells open, then holds.
-			local fieldR = model:GetAttribute("Field")
-			local fieldOn = type(fieldR) == "number" and fieldR > 0
-			if fieldOn and not v.field then
-				local d = Instance.new("Part")
-				d.Shape = Enum.PartType.Ball
-				d.Material = Enum.Material.ForceField
-				d.Color = Color3.fromRGB(170, 110, 255)
-				d.Anchored = true
-				d.CanCollide = false
-				d.CanQuery = false
-				d.CanTouch = false
-				d.CastShadow = false
-				d.Size = Vector3.one
-				local edge = Instance.new("CylinderHandleAdornment")
-				edge.Name = "Edge"
-				edge.Adornee = d
-				edge.Height = 0.15
-				edge.CFrame = CFrame.new(0, 0.1, 0) * CFrame.Angles(math.rad(90), 0, 0)
-				edge.Color3 = Color3.fromRGB(200, 150, 255)
-				edge.Transparency = 0.25
-				edge.Parent = d
-				d.Parent = fxFolder
-				v.field = d
-				v.fieldT = 0
-			elseif not fieldOn and v.field then
-				v.field:Destroy()
-				v.field = nil
-			end
-			if v.field and type(fieldR) == "number" then
-				v.fieldT += dt
-				local open = 1 - (1 - math.min(1, v.fieldT / 0.3)) ^ 3
-				local r = math.max(0.5, fieldR * open)
-				v.field.Size = Vector3.one * r * 2
-				v.field.CFrame = CFrame.new(root.Position.X, 0, root.Position.Z) -- centred on the ground: a dome
-				local edge = v.field:FindFirstChild("Edge") :: CylinderHandleAdornment?
-				if edge then -- a bright ring where the dome meets the ground
-					edge.Radius = r
-					edge.InnerRadius = math.max(0, r - 0.5)
-				end
+			frame.v, frame.model, frame.root, frame.body, frame.rig = v, model, root, body, v.rig
+			frame.attacking = model:GetAttribute("Firing") == true
+			frame.scale, frame.lift, frame.dt = scale, (scale - 1) * Config.Robot.BodyLift, dt
+			frame.me, frame.myRoot = me, myRoot
+			for _, animate in ANIMATORS do
+				animate(frame)
 			end
 		end
 	end)

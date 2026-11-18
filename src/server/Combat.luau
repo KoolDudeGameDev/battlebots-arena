@@ -595,7 +595,6 @@ local function spawnHusk(e: World.Entity, x: number, z: number)
 	p.CFrame = CFrame.new(x, size * 0.3, z)
 	p.Color = Color3.fromRGB(46, 42, 40)
 	p.Material = Enum.Material.CorrodedMetal
-	p:SetAttribute("OwnerId", e.id)
 	local glow = Instance.new("Part")
 	glow.Name = "HuskCracks"
 	glow.Shape = Enum.PartType.Cylinder
@@ -618,7 +617,7 @@ local function spawnHusk(e: World.Entity, x: number, z: number)
 	smoke.Transparency = NumberSequence.new(0.4, 1)
 	smoke.EmissionDirection = Enum.NormalId.Top
 	smoke.Parent = p
-	-- A ring that fills in while the core reclaims it (the Reclaim attribute, 0-1).
+	-- A ring that fills in while the core reclaims it (tickBomber sizes it).
 	local fill = Instance.new("Part")
 	fill.Name = "ReclaimFill"
 	fill.Shape = Enum.PartType.Cylinder

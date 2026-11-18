@@ -35,6 +35,8 @@ local suites = {
 	require("./Floors.spec"),
 	require("./HudLayout.spec"),
 	require("./MountFire.spec"),
+	require("./Contract.spec"),
+	require("./RobotMotion.spec"),
 }
 
 for _, suite in suites do
