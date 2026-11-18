@@ -657,24 +657,100 @@ local function buildPrimary(ctx: Ctx, turret: BasePart, chassisId: string, build
 		attach(ctx, gun, "Bell", Vector3.new(0.55, w + 0.8, w + 0.8), CFrame.new(0, 0, -3.2) * AXIS_Z, shade(STEEL, 0.3), M.Metal, SHAPE.Cylinder)
 		attach(ctx, gun, "NozzleTip", Vector3.new(0.12, w + 0.6, w + 0.6), CFrame.new(0, 0, -3.5) * AXIS_Z, Color3.fromRGB(90, 40, 30), M.Neon, SHAPE.Cylinder):SetAttribute("HeatGlow", true)
 		attach(ctx, ctx.root, "FuelLine", Vector3.new(0.16, 0.16, 2.4), CFrame.new(0.5, -0.1, 0.2), RUBBER, M.SmoothPlastic)
+		-- Twin fuel tanks behind the regulator (D88), red with brass caps, piped to it.
+		local UPRIGHT = CFrame.Angles(0, 0, math.rad(90))
+		for _, x in { -0.34, 0.34 } do
+			attach(ctx, gun, "FuelTank", Vector3.new(1.1, 0.55, 0.55), CFrame.new(x, 0.3, 0.85) * UPRIGHT, Color3.fromRGB(176, 42, 30), M.Metal, SHAPE.Cylinder)
+			attach(ctx, gun, "TankCap", Vector3.new(0.14, 0.34, 0.34), CFrame.new(x, 0.9, 0.85) * UPRIGHT, BRASS, M.Metal, SHAPE.Cylinder)
+		end
+		attach(ctx, gun, "FuelPipe", Vector3.new(0.7, 0.14, 0.14), CFrame.new(0, 0.55, 0.85), RUBBER, M.SmoothPlastic)
 		local nozzle = attach(ctx, gun, "Nozzle", Vector3.new(0.4, 0.4, 0.4), CFrame.new(0, 0, -3.55), DARK, M.SmoothPlastic)
 		nozzle.Transparency = 1
-		-- Flame jet: clients switch it on while the robot attacks.
-		local fire = Instance.new("ParticleEmitter")
-		fire.Name = "Flame"
-		fire.Enabled = false
-		fire.EmissionDirection = Enum.NormalId.Front
-		fire.Rate = 140
+		-- The flame (D88, after Gregory's reference): a white-hot core at the nozzle, a
+		-- thick jet that slows (Drag) and billows into a fireball at the end of its reach,
+		-- embers, smoke rolling off the end, and a flickering glow. Clients switch them on
+		-- while the robot attacks. Reach: speed / drag * (1 - e^(-drag * life)) is about
+		-- 15.5 studs, the flamer's 16-stud range; Range cards stretch the speed.
 		local flameLen = 1 + (st.stat_range or 0) * Config.StatPerStack.stat_range
-		fire.Speed = NumberRange.new(36 * flameLen, 44 * flameLen)
-		fire.Lifetime = NumberRange.new(0.3, 0.42)
 		local flameSpread = 18 + (st.stat_cone or 0) * Config.StatPerStack.stat_cone / 2 -- Wider Flames (D71)
-		fire.SpreadAngle = Vector2.new(flameSpread, flameSpread)
-		fire.LightEmission = 1
-		fire.Color = ColorSequence.new(Color3.fromRGB(255, 220, 90), Color3.fromRGB(255, 70, 20))
-		fire.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.8), NumberSequenceKeypoint.new(1, 3.2) })
-		fire.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) })
-		fire.Parent = nozzle
+		local FIRE = "rbxasset://textures/particles/fire_main.dds"
+		local function emitter(name: string, props: { [string]: any })
+			local pe = Instance.new("ParticleEmitter")
+			pe.Name = name
+			pe.Enabled = false
+			pe.EmissionDirection = Enum.NormalId.Front
+			for k, val in props do
+				(pe :: any)[k] = val
+			end
+			pe.Parent = nozzle
+		end
+		emitter("Flame", {
+			Texture = FIRE,
+			Rate = 170,
+			Speed = NumberRange.new(46 * flameLen, 54 * flameLen),
+			Drag = 2.2,
+			Lifetime = NumberRange.new(0.45, 0.6),
+			SpreadAngle = Vector2.new(flameSpread, flameSpread),
+			Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(0.3, 2.2), NumberSequenceKeypoint.new(1, 5.5) }),
+			Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(0.6, 0.3), NumberSequenceKeypoint.new(1, 1) }),
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 250, 220)),
+				ColorSequenceKeypoint.new(0.15, Color3.fromRGB(255, 215, 90)),
+				ColorSequenceKeypoint.new(0.55, Color3.fromRGB(255, 120, 30)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 30, 10)),
+			}),
+			LightEmission = 0.9,
+			LightInfluence = 0,
+			Rotation = NumberRange.new(0, 360),
+			RotSpeed = NumberRange.new(-180, 180),
+		})
+		emitter("FlameCore", {
+			Texture = FIRE,
+			Rate = 120,
+			Speed = NumberRange.new(40 * flameLen, 46 * flameLen),
+			Lifetime = NumberRange.new(0.1, 0.14),
+			SpreadAngle = Vector2.new(4, 4),
+			Size = NumberSequence.new(0.5, 1.3),
+			Transparency = NumberSequence.new(0, 0.6),
+			Color = ColorSequence.new(Color3.fromRGB(200, 230, 255), Color3.fromRGB(255, 240, 180)),
+			LightEmission = 1,
+			LightInfluence = 0,
+		})
+		emitter("FlameEmbers", {
+			Texture = "rbxasset://textures/particles/sparkles_main.dds",
+			Rate = 30,
+			Speed = NumberRange.new(30 * flameLen, 50 * flameLen),
+			Drag = 1.5,
+			Lifetime = NumberRange.new(0.5, 1),
+			SpreadAngle = Vector2.new(flameSpread + 10, flameSpread + 10),
+			Acceleration = Vector3.new(0, 6, 0),
+			Size = NumberSequence.new(0.25, 0),
+			Color = ColorSequence.new(Color3.fromRGB(255, 220, 120), Color3.fromRGB(255, 90, 20)),
+			LightEmission = 1,
+		})
+		emitter("FlameSmoke", {
+			Texture = "rbxasset://textures/particles/smoke_main.dds",
+			Rate = 35,
+			Speed = NumberRange.new(44 * flameLen, 52 * flameLen),
+			Drag = 2.4,
+			Lifetime = NumberRange.new(1, 1.4),
+			SpreadAngle = Vector2.new(flameSpread, flameSpread),
+			Acceleration = Vector3.new(0, 4, 0),
+			Size = NumberSequence.new(1.5, 6),
+			-- Hidden inside the jet, then rolling off its end as dark smoke.
+			Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.35, 1), NumberSequenceKeypoint.new(0.5, 0.55), NumberSequenceKeypoint.new(1, 1) }),
+			Color = ColorSequence.new(Color3.fromRGB(50, 45, 42), Color3.fromRGB(90, 88, 85)),
+			Rotation = NumberRange.new(0, 360),
+			RotSpeed = NumberRange.new(-40, 40),
+		})
+		local glow = Instance.new("PointLight")
+		glow.Name = "FlameLight"
+		glow.Enabled = false
+		glow.Color = Color3.fromRGB(255, 140, 50)
+		glow.Range = 18
+		glow.Brightness = 3
+		glow.Shadows = false
+		glow.Parent = nozzle
 		-- Pilot light: a small blue-tipped flame that burns at the tip while idle.
 		local pilot = Instance.new("ParticleEmitter")
 		pilot.Name = "PilotLight"

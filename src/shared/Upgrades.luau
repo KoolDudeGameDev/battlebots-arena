@@ -46,7 +46,7 @@ local list: { Def } = {
 	{ id = "wpn_shock", name = "Shock Coil", category = "Weapon", rarity = "Rare", weight = 5, max = 5, minLevel = 6, tags = { "offense", "mount" }, text = "Lightning that chains between nearby targets", requiresAnyTag = { "gun_mounts", "special_mounts" } },
 	{ id = "wpn_spikeram", name = "Minotaur Horns", category = "Weapon", rarity = "Rare", weight = 6, max = 5, minLevel = 1, tags = { "offense", "mount", "melee" }, text = "Big horns gore robots you drive into and toss them back", requiresAnyTag = { "melee_mounts", "special_mounts" } },
 	{ id = "wpn_sidesaw", name = "Vertical Saw", category = "Weapon", rarity = "Rare", weight = 5, max = 5, minLevel = 4, tags = { "offense", "mount", "melee" }, text = "A spinning blade on your back that grinds any robot touching you", requiresAnyTag = { "melee_mounts" } },
-	{ id = "wpn_traps", name = "Spike Traps", category = "Weapon", rarity = "Rare", weight = 5, max = 5, minLevel = 4, tags = { "offense", "mount" }, text = "Drops spike traps in fights that hurt and pin robots for 1 s", requiresAnyTag = { "melee_mounts", "special_mounts" } },
+	{ id = "wpn_traps", name = "Spike Traps", category = "Weapon", rarity = "Rare", weight = 5, max = 5, minLevel = 4, tags = { "offense", "mount" }, text = "Drops spike traps behind you as you drive: they hurt and pin robots for 1 s", requiresAnyTag = { "melee_mounts", "special_mounts" } },
 	{ id = "wpn_shieldgen", name = "Shield Generator", category = "Weapon", rarity = "Rare", weight = 5, max = 5, minLevel = 6, tags = { "sustain", "mount" }, text = "A recharging energy shield blocks hits from the front", requiresAnyTag = { "melee_mounts", "special_mounts" } },
 
 	-- Skills are deliberately rarer (D32): low weight, from Lv 6, no "need" boost.

@@ -4,6 +4,7 @@
 -- rocks and flowers; biomes and boss arenas get FillBlock floors.
 
 local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
@@ -12,6 +13,7 @@ local Config = require(Shared.Config)
 local Combat2D = require(Shared.Combat2D)
 local MapLayouts = require(Shared.MapLayouts)
 local MapQuery = require(Shared.MapQuery)
+local Remotes = require(Shared.Remotes)
 local World = require(script.Parent.World)
 
 local Arena = {}
@@ -200,7 +202,7 @@ end
 -- Biome and arena floors (E6): FillBlock squares, no TerrainRegion paste.
 -- { material, colour } for the outer, middle and centre squares (arenas: floor, outside).
 local FLOORS = {
-	forge_highlands = { { Enum.Material.Slate, { 111, 106, 99 } }, { Enum.Material.Pebble, { 142, 133, 122 } }, { Enum.Material.Ground, { 183, 174, 159 } } },
+	forge_highlands = { { Enum.Material.Slate, { 111, 106, 99 } }, { Enum.Material.Rock, { 142, 133, 122 } }, { Enum.Material.Ground, { 183, 174, 159 } } },
 	inferno_fields = { { Enum.Material.Basalt, { 52, 48, 46 } }, { Enum.Material.Ground, { 90, 84, 80 } }, { Enum.Material.Basalt, { 76, 69, 66 } } },
 	grinder_scrapyard = { { Enum.Material.Asphalt, { 92, 82, 72 } }, { Enum.Material.Ground, { 124, 116, 106 } }, { Enum.Material.Concrete, { 154, 150, 142 } } },
 	arena_forge = { { Enum.Material.Basalt, { 58, 54, 52 } }, { Enum.Material.CrackedLava, { 255, 120, 40 } } },
@@ -629,20 +631,8 @@ function Arena.breakPiece(kind: string, id: number): (number?, number?)
 	return nil, nil
 end
 
--- Builds a map (D81): floor, lighting, boundary wall, cover, lava, spawn pads and the
--- boss gate. Replaces whatever map was up. Sets Workspace attribute Map.
-function Arena.load(name: string)
-	local map = MapLayouts[name]
-	assert(map, "no map " .. tostring(name))
-	current = map
-	Arena.broken = {}
-	pieceParts = {}
-	local old = Arena.folder
-	if old then
-		old:Destroy()
-	end
-	local folder = Instance.new("Folder")
-	folder.Name = "Arena"
+-- Floor, lighting, boundary wall, cover, lava, spawn pads, the boss gate and decor.
+local function buildMap(name: string, map: any, folder: Folder)
 	local rng = Random.new(7) -- fixed seed: every server looks the same
 
 	local grass: { { number } } = {}
@@ -721,7 +711,33 @@ function Arena.load(name: string)
 			end
 		end
 	end
+end
 
+-- Builds a map (D81) and replaces whatever map was up. Sets Workspace attributes Map
+-- and MapDisplay. A build error is logged with its line and the swap still finishes
+-- with what was built (D87): before, one error left the old map destroyed, the new
+-- one never shown and the map flow stuck mid-swap.
+function Arena.load(name: string)
+	local map = MapLayouts[name]
+	assert(map, "no map " .. tostring(name))
+	current = map
+	Arena.broken = {}
+	pieceParts = {}
+	local old = Arena.folder
+	if old then
+		old:Destroy()
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "Arena"
+	local ok, err = xpcall(buildMap, debug.traceback, name, map, folder)
+	if not ok then
+		warn(`[Arena] building {name} failed:`, err)
+		if RunService:IsStudio() then -- so a play test sees it without opening the server log (D89)
+			local first = string.split(tostring(err), "\n")[1]
+			Remotes.Notice:FireAllClients(`[Arena] building {name} failed: {first}`)
+		end
+	end
+	print(`[Arena] {name} built: {#folder:GetDescendants()} parts`)
 	folder.Parent = Workspace
 	Arena.folder = folder
 	Workspace:SetAttribute("CoverBroken", "")

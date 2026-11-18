@@ -43,7 +43,7 @@ local MUZZLE_BLEND = 10
 -- Which mount fires each kind of shot (D82); other kinds come from the main gun.
 local MOUNT_OF: { [number]: string } = { [2] = "wpn_gatling", [3] = "wpn_rocket", [5] = "wpn_railgun" }
 
-type Live = { part: Part, x: number, z: number, dx: number, dz: number, speed: number, accel: number, maxSpeed: number, remaining: number, owner: number, code: number, flown: number, y0: number, offX: number, offZ: number, spin: number }
+type Live = { part: Part, x: number, z: number, dx: number, dz: number, speed: number, accel: number, maxSpeed: number, remaining: number, owner: number, code: number, flown: number, y0: number, offX: number, offZ: number, spin: number, born: number, life: number }
 
 local live: { [number]: Live } = {}
 local pools: { [number]: { Part } } = {}
@@ -287,7 +287,9 @@ function Projectiles.init(fx: Folder)
 			local pos = Vector3.new(x + offX, y0, z + offZ)
 			p.CFrame = CFrame.lookAt(pos, pos + Vector3.new(dx, 0, dz))
 			setEffects(p, true)
-			live[id] = { part = p, x = x, z = z, dx = dx, dz = dz, speed = speed, accel = accel, maxSpeed = maxSpeed, remaining = range, owner = owner, code = code, flown = 0, y0 = y0, offX = offX, offZ = offZ, spin = math.random() * math.pi * 2 }
+			live[id] = { part = p, x = x, z = z, dx = dx, dz = dz, speed = speed, accel = accel, maxSpeed = maxSpeed, remaining = range, owner = owner, code = code, flown = 0, y0 = y0, offX = offX, offZ = offZ, spin = math.random() * math.pi * 2,
+				-- The longest this shot can fly: its whole range at launch speed, slowed by a Null Field the whole way.
+				born = os.clock(), life = range / math.max(1, speed) / FIELD_SLOW + 1 }
 			-- Feedback at the gun: the sound, the recoil, and a backblast puff for rockets.
 			Sfx.at(look.sound, pos)
 			if not mount and fromGun and ClientState.actions.kick then
@@ -335,6 +337,13 @@ function Projectiles.init(fx: Folder)
 			end
 		end
 		for id, l in live do
+			-- A shot still here after the longest flight it could have is stuck (a play
+			-- tester saw Bombard rockets hang in mid-air on a phone): log it and drop it.
+			if os.clock() - l.born > l.life then
+				warn(string.format("[Projectiles] stuck shot %d dropped: kind %d, speed %.1f, %.1f range left, flew %.1f", id, l.code, l.speed, l.remaining, l.flown))
+				release(id)
+				continue
+			end
 			if l.accel > 0 then -- same speed curve as the server (D45)
 				l.speed = Combat2D.rocketSpeed(l.speed, l.accel, l.maxSpeed, dt)
 			end

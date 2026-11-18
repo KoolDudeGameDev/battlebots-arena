@@ -26,6 +26,7 @@ local TOUCH_YAW = 0.008
 
 local mouseDown = false
 local aimTouch: InputObject? = nil
+local cursorToggled = false -- Ctrl: the cursor stays free until Ctrl again (D89)
 local aimOrigin = Vector2.zero
 local lastTouchPos = Vector2.zero
 local lastSentFiring = false
@@ -329,6 +330,8 @@ function InputController.init()
 			InputController.toggleAuto()
 		elseif input.KeyCode == Enum.KeyCode.V then
 			InputController.toggleCam()
+		elseif input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
+			cursorToggled = not cursorToggled -- like Roblox's Shift Lock switch, on Ctrl (D89)
 		elseif input.KeyCode == Enum.KeyCode.G and ClientState.actions.garage then
 			ClientState.actions.garage()
 		elseif ClientState.actions.pick then
@@ -397,9 +400,10 @@ function InputController.init()
 		local autoHasTarget = true
 		if third then
 			-- Roblox resets MouseBehavior each frame, so it is re-applied here.
-			-- Holding Left Alt frees the cursor, e.g. to click upgrade cards.
+			-- Ctrl switches the cursor on and off (D89); holding Left Alt frees it for a
+			-- moment. Either way you can click upgrade cards.
 			if not ClientState.isTouch then
-				local free = UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or ClientState.menuOpen
+				local free = cursorToggled or UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or ClientState.menuOpen
 				ClientState.cursorFree = free
 				UserInputService.MouseBehavior = if free then Enum.MouseBehavior.Default else Enum.MouseBehavior.LockCenter
 				-- The locked cursor is hidden; the crosshair shows where you aim (D78).

@@ -211,10 +211,10 @@ Config.Weapons = {
 	sidesaw = { damage = 6, fireRate = 4, reach = 2.5, damagePerRank = 0.2 }, -- grinds every robot within reach of your hitbox, any side
 	traps = {
 		damage = 25,
-		fireRate = 0.2, -- one trap every 5 s while an enemy is within triggerRange
+		fireRate = 0.2, -- one trap every 5 s while you drive, behind you (D88)
 		fireRatePerRank = 0.15,
 		damagePerRank = 0.2,
-		triggerRange = 30,
+		minSpeed = 4, -- studs/s: standing still drops nothing
 		maxTraps = 3, -- the oldest goes when you drop a 4th
 		radius = 3,
 		armDelay = 0.5,

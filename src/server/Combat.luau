@@ -995,13 +995,24 @@ local function removeTrap(i: number)
 	end
 end
 
--- Spike Traps: drop one where you stand while an enemy robot is near.
+-- Spike Traps (D88): while you drive, drop one just behind your rear wheels, so
+-- they trail along your tracks. Was: under you, and only with an enemy near, so a
+-- player testing alone never saw one.
 local function dropTrap(e: World.Entity, def, damage: number, t: number): boolean
-	local x, z = World.position(e)
-	local _, near = nearestTarget(e.id, x, z, def.triggerRange, false)
-	if not near then
+	local root = e.root
+	if not root then
 		return false
 	end
+	local vel = root.AssemblyLinearVelocity
+	if vel.X * vel.X + vel.Z * vel.Z < def.minSpeed * def.minSpeed then
+		return false
+	end
+	-- Behind the way you're moving, not the way the hull faces: a robot backing away
+	-- while it shoots still leaves the trap in its tracks.
+	local cx, cz = World.position(e)
+	local speed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
+	local behind = World.hitRadius(e, Config) + def.radius * 0.6
+	local x, z = cx - vel.X / speed * behind, cz - vel.Z / speed * behind
 	local mine = {}
 	for i, tr in traps do
 		if tr.ownerId == e.id then
@@ -1634,7 +1645,12 @@ local function tickSustain(e: World.Entity, t: number, dt: number)
 		e.hp = math.min(e.stats.maxHp, e.hp + e.regenRate * dt)
 		syncHp(e)
 	end
-	if t < e.burnUntil then
+	-- Clients set burning robots alight (fire, smoke and a glow) from this attribute (D88).
+	local burning = t < e.burnUntil
+	if e.model and e.model:GetAttribute("Burning") ~= burning then
+		e.model:SetAttribute("Burning", burning)
+	end
+	if burning then
 		e.burnAcc += e.burnDps * dt
 		if e.burnAcc >= e.burnDps * Config.Combat.BurnTick then
 			local amount = e.burnAcc

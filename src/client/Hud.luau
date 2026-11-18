@@ -26,6 +26,8 @@ local TEXT = Color3.fromRGB(240, 242, 246)
 local MUTED = Color3.fromRGB(165, 170, 180)
 local isTouch = ClientState.isTouch
 local BODY = if isTouch then 16 else 14
+-- Leaderboard rows: phones show the top 3 (plus you) so it ends above the SKILL button.
+local BOARD_ROWS = if isTouch then 3 else 5
 
 local function new(className: string, props: { [string]: any }, parent: Instance?): any
 	local inst = Instance.new(className)
@@ -73,7 +75,7 @@ local xpFill: Frame
 local levelText: TextLabel
 local xpText: TextLabel
 local comebackBadge: TextLabel
-local armorBack: Frame
+local armorRow: Frame
 local armorFill: Frame
 local armorText: TextLabel
 local regenPill: TextLabel
@@ -93,6 +95,12 @@ local deathInfo: TextLabel
 local deathTimer: TextLabel
 local skillLabel: TextLabel
 local autoLabel: TextLabel
+local camHint: TextLabel
+-- The view tip (D87): shown on your first spawn until you switch views once.
+local viewTip: TextLabel
+local tipShown = false
+local camSwitched = false
+local startMode = ClientState.camMode
 local skillButton: TextButton?
 local autoButton: TextButton?
 local stickRing: Frame
@@ -105,61 +113,58 @@ local deathRespawnAt: number? = nil
 
 -- Bars --------------------------------------------------------------------------
 
+-- Top left (D87, D88): health, armor under it, XP, with no panel behind them. Under
+-- them: timed boosts, then the kill feed.
+local PANEL_W = if isTouch then 200 else 280
+local leftColumn: Frame
+
+local function barRow(parent: Instance, order: number, glyph: string, height: number, color: Color3): (Frame, Frame, Frame)
+	local row = new("Frame", { LayoutOrder = order, Size = UDim2.new(1, 0, 0, height), BackgroundTransparency = 1 }, parent)
+	text(row, { Size = UDim2.fromOffset(20, height), Text = glyph, TextSize = math.min(16, height + 2), TextXAlignment = Enum.TextXAlignment.Center })
+	local back = new("Frame", { Position = UDim2.fromOffset(26, 0), Size = UDim2.new(1, -26, 1, 0), BackgroundColor3 = Color3.fromRGB(8, 9, 12), BackgroundTransparency = 0.3 }, row)
+	corner(back, height // 2)
+	local fill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = color }, back)
+	corner(fill, height // 2)
+	return row, back, fill
+end
+
 local function buildBars()
-	local bars = new("Frame", {
-		Name = "Bars",
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -14),
-		Size = UDim2.new(0.5, 0, 0, 44),
+	leftColumn = new("Frame", {
+		Name = "Build",
+		Position = UDim2.fromOffset(12, 12),
+		Size = UDim2.fromOffset(PANEL_W, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 	}, gui)
-	new("UISizeConstraint", { MinSize = Vector2.new(260, 44), MaxSize = Vector2.new(440, 44) }, bars)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6) }, leftColumn)
 
-	local hpBack = new("Frame", { Size = UDim2.new(1, 0, 0, 20), BackgroundColor3 = PANEL, BackgroundTransparency = 0.2 }, bars)
-	corner(hpBack, 6)
-	hpFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(90, 210, 110) }, hpBack)
-	corner(hpFill, 6)
-	hpText = text(hpBack, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.GothamBold, Text = "100 / 100", ZIndex = 2 })
+	local panel = new("Frame", { LayoutOrder = 1, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, leftColumn)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 5) }, panel)
 
-	local xpBack = new("Frame", { Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 0, 16), BackgroundColor3 = PANEL, BackgroundTransparency = 0.2 }, bars)
-	corner(xpBack, 6)
-	xpFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = Color3.fromRGB(110, 170, 255) }, xpBack)
-	corner(xpFill, 6)
-	levelText = text(xpBack, { Position = UDim2.fromOffset(8, 0), Size = UDim2.fromScale(0.5, 1), Font = Enum.Font.GothamBold, Text = "Lv 0", TextSize = 13, ZIndex = 2 })
-	xpText = text(xpBack, { Position = UDim2.new(0.5, -8, 0, 0), Size = UDim2.fromScale(0.5, 1), TextXAlignment = Enum.TextXAlignment.Right, Text = "", TextSize = 13, ZIndex = 2 })
+	local _hpRow, hpBack
+	_hpRow, hpBack, hpFill = barRow(panel, 1, "❤️", 20, Color3.fromRGB(90, 210, 110))
+	hpText = text(hpBack, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.GothamBold, TextSize = 13, Text = "100 / 100", TextStrokeTransparency = 0.6, ZIndex = 2 })
 
-	comebackBadge = text(bars, {
-		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(1, 8, 1, 0),
-		Size = UDim2.fromOffset(150, 22),
-		BackgroundTransparency = 0,
-		BackgroundColor3 = Color3.fromRGB(235, 130, 40),
-		Font = Enum.Font.GothamBold,
-		TextSize = 13,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Text = "COMEBACK x2.5",
-		Visible = false,
-	})
-	corner(comebackBadge, 11)
+	-- Armor sits under health and only shows once you have armor (D33, D87).
+	local armorBar
+	armorRow, armorBar, armorFill = barRow(panel, 2, "🛡️", 12, Color3.fromRGB(110, 170, 255))
+	armorRow.Visible = false
+	armorText = text(armorBar, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.GothamBold, TextSize = 10, Text = "", ZIndex = 2 })
 
-	-- Armor bar sits above health and only shows once you have armor (D33).
-	armorBack = new("Frame", { Position = UDim2.fromOffset(0, -14), Size = UDim2.new(1, 0, 0, 10), BackgroundColor3 = PANEL, BackgroundTransparency = 0.2, Visible = false }, bars)
-	corner(armorBack, 5)
-	armorFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(110, 170, 255) }, armorBack)
-	corner(armorFill, 5)
-	armorText = text(armorBack, { Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, Font = Enum.Font.GothamBold, TextSize = 10, Text = "", ZIndex = 2 })
+	local _xpRow, xpBack
+	_xpRow, xpBack, xpFill = barRow(panel, 3, "⭐", 16, Color3.fromRGB(240, 190, 60))
+	xpFill.Size = UDim2.fromScale(0, 1)
+	-- Level on the left 60%, XP on the right 40%, so the two never run into each other.
+	levelText = text(xpBack, { Position = UDim2.fromOffset(8, 0), Size = UDim2.new(0.6, -8, 1, 0), Font = Enum.Font.GothamBold, Text = "Lv 0", TextSize = 12, TextTruncate = Enum.TextTruncate.AtEnd, TextStrokeTransparency = 0.6, ZIndex = 2 })
+	xpText = text(xpBack, { Position = UDim2.fromScale(0.6, 0), Size = UDim2.new(0.4, -8, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, Text = "", TextSize = 12, TextTruncate = Enum.TextTruncate.AtEnd, TextStrokeTransparency = 0.6, ZIndex = 2 })
 
-	-- Booster timers (Regen Pod, Armor Pod), stacked left of the bars.
-	local pills = new("Frame", {
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(0, -8, 1, 0),
-		Size = UDim2.fromOffset(136, 76),
-		BackgroundTransparency = 1,
-	}, bars)
-	new("UIListLayout", { VerticalAlignment = Enum.VerticalAlignment.Bottom, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, pills)
-	local function pill(color: Color3): TextLabel
-		local p = text(pills, {
-			Size = UDim2.fromOffset(136, 22),
+	-- Status chips (comeback, Regen Pod, Armor Pod, Fortify), under the bars.
+	local chips = new("Frame", { LayoutOrder = 2, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, leftColumn)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }, chips)
+	local function chip(order: number, color: Color3): TextLabel
+		local p = text(chips, {
+			LayoutOrder = order,
+			Size = UDim2.fromOffset(150, 22), -- phones: ends left of the upgrade cards
 			BackgroundTransparency = 0,
 			BackgroundColor3 = color,
 			Font = Enum.Font.GothamBold,
@@ -170,9 +175,10 @@ local function buildBars()
 		corner(p, 11)
 		return p
 	end
-	regenPill = pill(Color3.fromRGB(70, 170, 70))
-	armorPill = pill(Color3.fromRGB(60, 130, 210))
-	fortifyPill = pill(Color3.fromRGB(200, 80, 160))
+	comebackBadge = chip(1, Color3.fromRGB(235, 130, 40))
+	regenPill = chip(2, Color3.fromRGB(70, 170, 70))
+	armorPill = chip(3, Color3.fromRGB(60, 130, 210))
+	fortifyPill = chip(4, Color3.fromRGB(200, 80, 160))
 end
 
 -- Upgrade tray --------------------------------------------------------------------
@@ -184,19 +190,25 @@ local function kindText(card): string
 		local old = card.replaces and Upgrades.byId[card.replaces]
 		return "Replaces " .. (if old then old.name else "skill")
 	elseif card.kind == "fallback" then
-		return "Backup"
+		return "Bonus"
 	elseif card.category == "Stat" then
 		return "Stack " .. card.rank
 	end
 	return "Rank " .. card.rank
 end
 
+-- Upgrade cards sit at the bottom (the bars moved to the build panel, D87). Phones:
+-- smaller cards, right-aligned just left of the thumb buttons (which take the last 168 px).
+local CARD_W = if isTouch then 124 else 150
+local TRAY_ANCHOR = if isTouch then Vector2.new(1, 1) else Vector2.new(0.5, 1)
+local TRAY_POS = if isTouch then UDim2.new(1, -180, 1, -12) else UDim2.new(0.5, 0, 1, -16)
+
 local function buildTray()
 	tray = new("Frame", {
 		Name = "Tray",
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -86),
-		Size = UDim2.fromOffset(470, 128),
+		AnchorPoint = TRAY_ANCHOR,
+		Position = TRAY_POS,
+		Size = UDim2.fromOffset(CARD_W * 3 + 20, 128),
 		BackgroundTransparency = 1,
 		Visible = false,
 	}, gui)
@@ -222,8 +234,8 @@ local function buildTray()
 
 	collapsed = new("TextButton", {
 		Name = "LevelUp",
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -86),
+		AnchorPoint = TRAY_ANCHOR,
+		Position = TRAY_POS,
 		Size = UDim2.fromOffset(190, 40),
 		BackgroundColor3 = Color3.fromRGB(70, 140, 255),
 		Font = Enum.Font.GothamBold,
@@ -250,7 +262,7 @@ local function fillTray(offer)
 		local color = rgb(Config.RarityColors[card.rarity] or Config.RarityColors.Common)
 		local button = new("TextButton", {
 			LayoutOrder = i,
-			Size = UDim2.fromOffset(150, 128),
+			Size = UDim2.fromOffset(CARD_W, 128),
 			BackgroundColor3 = PANEL,
 			BackgroundTransparency = 0.08,
 			Text = "",
@@ -259,15 +271,17 @@ local function fillTray(offer)
 		corner(button, 10)
 		new("UIStroke", { Color = color, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, button)
 		new("UIPadding", {
-			PaddingLeft = UDim.new(0, 10),
-			PaddingRight = UDim.new(0, 10),
+			PaddingLeft = UDim.new(0, 8),
+			PaddingRight = UDim.new(0, 8),
 			PaddingTop = UDim.new(0, 8),
 			PaddingBottom = UDim.new(0, 8),
 		}, button)
-		text(button, { Size = UDim2.new(1, 0, 0, 14), Text = string.upper(card.category) .. " · " .. card.rarity, TextSize = 11, TextColor3 = color, Font = Enum.Font.GothamBold })
-		text(button, { Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 20), Text = card.name, TextSize = 16, Font = Enum.Font.GothamBold, TextTruncate = Enum.TextTruncate.AtEnd })
-		text(button, { Position = UDim2.fromOffset(0, 36), Size = UDim2.new(1, 0, 0, 16), Text = kindText(card), TextSize = 13, TextColor3 = MUTED })
-		text(button, { Position = UDim2.fromOffset(0, 54), Size = UDim2.new(1, 0, 1, -54), Text = card.text, TextSize = 13, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
+		text(button, { Size = UDim2.new(1, 0, 0, 14), Text = string.upper(card.category) .. (if isTouch then "" else " · " .. card.rarity), TextSize = 11, TextColor3 = color, Font = Enum.Font.GothamBold, TextTruncate = Enum.TextTruncate.AtEnd })
+		text(button, { Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 20), Text = card.name, TextSize = if isTouch then 14 else 16, Font = Enum.Font.GothamBold, TextTruncate = Enum.TextTruncate.AtEnd })
+		text(button, { Position = UDim2.fromOffset(0, 36), Size = UDim2.new(1, 0, 0, 16), Text = kindText(card), TextSize = 12, TextColor3 = MUTED })
+		-- Long card text shrinks to fit rather than spilling out of the card.
+		local about = text(button, { Position = UDim2.fromOffset(0, 54), Size = UDim2.new(1, 0, 1, if isTouch then -54 else -70), Text = card.text, TextScaled = true, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
+		new("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 9 }, about)
 		if not isTouch then
 			text(button, { AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromScale(1, 1), Size = UDim2.fromOffset(24, 16), Text = "[" .. i .. "]", TextSize = 12, TextColor3 = MUTED, TextXAlignment = Enum.TextXAlignment.Right })
 		end
@@ -312,34 +326,72 @@ end
 
 -- Leaderboard and kill feed -----------------------------------------------------
 
+local boardRows: Frame
+local boardOpen = true
+
+local function setBoardOpen(open: boolean)
+	boardOpen = open
+	if isTouch then
+		boardRows.Visible = open -- phones keep the header to tap it open again
+	else
+		board.Visible = open
+	end
+end
+
 local function buildBoard()
+	-- Like Roblox's own player list (D88): top right, level with the Roblox buttons
+	-- (its own ScreenGui ignores the top bar, but keeps clear of a phone's notch).
+	-- Tab shows and hides it; on phones, tapping its header does.
+	local boardGui = new("ScreenGui", { Name = "Board", ResetOnSpawn = false, ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets }, gui.Parent)
 	board = new("Frame", {
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -12, 0, 12),
-		Size = UDim2.fromOffset(220, 0),
+		Position = UDim2.new(1, -12, 0, 16),
+		Size = UDim2.fromOffset(if isTouch then 200 else 220, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = PANEL,
 		BackgroundTransparency = 0.25,
-	}, gui)
+	}, boardGui)
 	corner(board, 8)
 	new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8) }, board)
 	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, board)
-
-	feed = new("Frame", {
-		Position = UDim2.fromOffset(12, 12),
-		Size = UDim2.fromOffset(300, 120),
+	local header: TextButton = new("TextButton", {
+		LayoutOrder = 0,
+		Size = UDim2.new(1, 0, 0, 18),
 		BackgroundTransparency = 1,
-	}, gui)
+		AutoButtonColor = false,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = MUTED,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = if isTouch then "LEADERBOARD" else "LEADERBOARD  ·  Tab",
+	}, board)
+	header.Activated:Connect(function()
+		setBoardOpen(not boardOpen)
+	end)
+	boardRows = new("Frame", { LayoutOrder = 1, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, board)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, boardRows)
+	game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
+		if not processed and input.KeyCode == Enum.KeyCode.Tab then
+			setBoardOpen(not boardOpen)
+		end
+	end)
+
+	-- The kill feed runs under the build panel and its boost chips (D87).
+	feed = new("Frame", {
+		LayoutOrder = 3,
+		Size = UDim2.fromScale(1, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+	}, leftColumn)
 	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }, feed)
 end
 
 local function updateBoard(rows)
-	for _, child in board:GetChildren() do
+	for _, child in boardRows:GetChildren() do
 		if child:IsA("TextLabel") then
 			child:Destroy()
 		end
 	end
-	text(board, { LayoutOrder = 0, Size = UDim2.new(1, 0, 0, 18), Text = "LEADERBOARD", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = MUTED })
 	local myRank = nil
 	for i, row in rows do
 		if row.userId == player.UserId then
@@ -348,21 +400,21 @@ local function updateBoard(rows)
 	end
 	local function line(i: number, row, order: number)
 		local mine = row.userId == player.UserId
-		text(board, {
+		text(boardRows, {
 			LayoutOrder = order,
 			Size = UDim2.new(1, 0, 0, 18),
-			Text = string.format("%d. %s  ·  Lv %d  ·  %s", i, row.name, row.level, fmt(row.score)),
+			Text = string.format("%d. %s  ·  Lv %d  ·  %s pts", i, row.name, row.level, fmt(row.score)),
 			TextSize = 13,
 			Font = if mine then Enum.Font.GothamBold else Enum.Font.GothamMedium,
 			TextColor3 = if mine then Color3.fromRGB(255, 220, 110) else TEXT,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		})
 	end
-	for i = 1, math.min(5, #rows) do
+	for i = 1, math.min(BOARD_ROWS, #rows) do
 		line(i, rows[i], i)
 	end
-	if myRank and myRank > 5 then
-		line(myRank, rows[myRank], 6)
+	if myRank and myRank > BOARD_ROWS then
+		line(myRank, rows[myRank], BOARD_ROWS + 1)
 	end
 end
 
@@ -386,7 +438,7 @@ local function addFeed(killerName: string, victimName: string, victimLevel: numb
 	table.sort(entries, function(a, b)
 		return a.LayoutOrder < b.LayoutOrder
 	end)
-	while #entries > 4 do
+	while #entries > (if isTouch then 2 else 4) do -- phones: the lower left is the move stick
 		local oldest = table.remove(entries, 1)
 		if oldest then
 			oldest:Destroy()
@@ -544,7 +596,7 @@ local function buildBoss()
 		mapLabel.Text = if phase == "warning" then `{boss} approaches · {clock(left)}`
 			elseif phase == "arena" then `{display} · {boss} leaves in {clock(left)}`
 			elseif phase == "victory" then `Victory! Back to the overworld in {clock(left)}`
-			elseif phase == "biome" then `{display} · {clock(left)}`
+			elseif phase == "biome" then `{display} · {clock(left)} left`
 			elseif phase == "revert" then `{display} fades in {clock(left)}`
 			else ""
 	end)
@@ -674,6 +726,34 @@ local function buildBoss()
 		end)
 	end)
 
+	-- Map check (D89): a few seconds after each swap, log what this client actually has:
+	-- the map's parts, ground under your robot, and whether the place streams. Tells
+	-- "the server never built it" apart from "it never reached this client".
+	Workspace:GetAttributeChangedSignal("Map"):Connect(function()
+		local mapName = Workspace:GetAttribute("Map")
+		task.delay(4, function()
+			if Workspace:GetAttribute("Map") ~= mapName then
+				return
+			end
+			local arena = Workspace:FindFirstChild("Arena")
+			local parts = if arena then #arena:GetDescendants() else 0
+			local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+			local ground = "no robot"
+			if root then
+				local params = RaycastParams.new()
+				params.FilterType = Enum.RaycastFilterType.Include
+				params.FilterDescendantsInstances = { Workspace.Terrain }
+				ground = if Workspace:Raycast(root.Position + Vector3.new(0, 20, 0), Vector3.new(0, -60, 0), params) then "yes" else "NONE"
+			end
+			local line = `[MapCheck] {mapName}: {parts} map parts here, ground under you: {ground}, streaming: {if Workspace.StreamingEnabled then "on" else "off"}`
+			if parts == 0 or ground == "NONE" then
+				warn(line)
+			else
+				print(line)
+			end
+		end)
+	end)
+
 	local shownAt = 0
 	Remotes.Announce.OnClientEvent:Connect(function(message)
 		if type(message) ~= "string" then
@@ -695,7 +775,7 @@ local function buildControls()
 	local hint = new("Frame", {
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, -12, 1, -14),
-		Size = UDim2.fromOffset(200, 112),
+		Size = UDim2.fromOffset(200, 133),
 		BackgroundColor3 = PANEL,
 		BackgroundTransparency = 0.25,
 		Visible = not isTouch,
@@ -703,16 +783,34 @@ local function buildControls()
 	corner(hint, 8)
 	skillLabel = text(hint, { Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, Text = "SPACE · No skill" })
 	autoLabel = text(hint, { Position = UDim2.fromOffset(10, 25), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "E · Auto-fire OFF" })
-	text(hint, { Position = UDim2.fromOffset(10, 46), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "V · Switch camera" })
+	camHint = text(hint, { Position = UDim2.fromOffset(10, 46), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "V · Top-down view" })
+
+	viewTip = text(gui, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 122), -- under the map line
+		Size = UDim2.fromOffset(0, 28),
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 0.2,
+		BackgroundColor3 = PANEL,
+		Font = Enum.Font.GothamBold,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Visible = false,
+	})
+	corner(viewTip, 14)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }, viewTip)
 	text(hint, { Position = UDim2.fromOffset(10, 67), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "1 / 2 / 3 · Pick upgrade" })
-	text(hint, { Position = UDim2.fromOffset(10, 88), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "Hold ALT · Free the mouse" })
+	text(hint, { Position = UDim2.fromOffset(10, 88), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "Ctrl · Cursor on / off" })
+	text(hint, { Position = UDim2.fromOffset(10, 109), Size = UDim2.new(1, -20, 0, 20), TextSize = 13, TextColor3 = MUTED, Text = "Tab · Leaderboard" })
 
-
+	-- Phone buttons sit in one thumb cluster in the bottom-right corner, sized to fit a
+	-- ~750 x 344 landscape safe area: [CAM][SKILL] above [AUTO][FIRE]. The leaderboard
+	-- (top right) ends above SKILL; the upgrade cards (bottom, right-aligned) end left of it.
 	if isTouch then
 		local skill: TextButton = new("TextButton", {
 			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -28, 1, -150),
-			Size = UDim2.fromOffset(84, 84),
+			Position = UDim2.new(1, -26, 1, -116),
+			Size = UDim2.fromOffset(68, 68),
 			BackgroundColor3 = Color3.fromRGB(60, 120, 230),
 			Font = Enum.Font.GothamBold,
 			TextSize = 14,
@@ -720,32 +818,32 @@ local function buildControls()
 			TextColor3 = TEXT,
 			Text = "SKILL",
 		}, gui)
-		corner(skill, 42)
+		corner(skill, 34)
 		skill.Activated:Connect(function()
 			ClientState.actions.useSkill()
 		end)
 		skillButton = skill
 		local auto: TextButton = new("TextButton", {
 			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -126, 1, -100),
-			Size = UDim2.fromOffset(64, 64),
+			Position = UDim2.new(1, -116, 1, -20),
+			Size = UDim2.fromOffset(52, 52),
 			BackgroundColor3 = PANEL,
 			Font = Enum.Font.GothamBold,
-			TextSize = 13,
+			TextSize = 11,
 			TextWrapped = true,
 			TextColor3 = TEXT,
 			Text = "AUTO\nOFF",
 		}, gui)
-		corner(auto, 32)
+		corner(auto, 26)
 		auto.Activated:Connect(function()
 			ClientState.actions.toggleAuto()
 		end)
 		autoButton = auto
 
 		local cam: TextButton = new("TextButton", {
-			AnchorPoint = Vector2.new(1, 0),
-			Position = UDim2.new(1, -240, 0, 12),
-			Size = UDim2.fromOffset(56, 40),
+			AnchorPoint = Vector2.new(1, 1),
+			Position = UDim2.new(1, -116, 1, -84),
+			Size = UDim2.fromOffset(52, 36),
 			BackgroundColor3 = PANEL,
 			Font = Enum.Font.GothamBold,
 			TextSize = 13,
@@ -761,8 +859,8 @@ local function buildControls()
 		-- Third-person on phone: the right side turns the camera, so firing needs its own button.
 		local fire: TextButton = new("TextButton", {
 			AnchorPoint = Vector2.new(1, 1),
-			Position = UDim2.new(1, -28, 1, -250),
-			Size = UDim2.fromOffset(84, 84),
+			Position = UDim2.new(1, -16, 1, -16),
+			Size = UDim2.fromOffset(88, 88),
 			BackgroundColor3 = Color3.fromRGB(220, 70, 60),
 			Font = Enum.Font.GothamBlack,
 			TextSize = 16,
@@ -770,7 +868,7 @@ local function buildControls()
 			Text = "FIRE",
 			Visible = false,
 		}, gui)
-		corner(fire, 42)
+		corner(fire, 44)
 		fire.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
 				ClientState.fireButtonHeld = true
@@ -811,7 +909,7 @@ local function perFrame()
 
 		local armor = character:GetAttribute("Armor") or 0
 		local maxArmor = character:GetAttribute("MaxArmor") or 0
-		armorBack.Visible = armor > 0 or maxArmor > 0
+		armorRow.Visible = armor > 0 or maxArmor > 0
 		armorFill.Size = UDim2.fromScale(math.clamp(armor / math.max(maxArmor, armor, 1), 0, 1), 1)
 		armorText.Text = string.format("ARMOR %d", armor)
 
@@ -838,6 +936,11 @@ local function perFrame()
 	if camButton then
 		camButton.Text = if third then "TOP" else "3RD"
 	end
+	camHint.Text = if third then "V · Top-down view" else "V · Third-person view"
+	if ClientState.camMode ~= startMode then
+		camSwitched = true
+		viewTip.Visible = false
+	end
 
 	-- Tray collapse after TrayCollapseAfter seconds untouched.
 	if s and s.offer and s.alive and shownOfferId == s.offer.id then
@@ -847,6 +950,10 @@ local function perFrame()
 		local waitingForServer = s.offer.id == pickedOfferId
 		tray.Visible = not trayCollapsed and not waitingForServer
 		collapsed.Visible = trayCollapsed and not waitingForServer
+	end
+	-- Phones: the kill feed steps aside while the upgrade cards are open (they share the left).
+	if isTouch then
+		feed.Visible = not tray.Visible
 	end
 
 	-- Skill cooldown
@@ -902,20 +1009,32 @@ local function onState(s)
 	end
 	if s.xpNeed and s.xpNeed > 0 then
 		xpFill.Size = UDim2.fromScale(math.clamp(s.xp / s.xpNeed, 0, 1), 1)
-		xpText.Text = fmt(s.xp) .. " / " .. fmt(s.xpNeed)
+		xpText.Text = fmt(s.xp) .. " / " .. fmt(s.xpNeed) .. " XP"
 	else
 		xpFill.Size = UDim2.fromScale(1, 1)
 		xpText.Text = "MAX"
 	end
+	-- Phones only have room for the level; PC adds when the next upgrade comes.
 	local nextOffer = XpCurve.nextOfferLevel(s.level)
-	levelText.Text = "Lv " .. s.level .. (if nextOffer then "   ·   upgrade at Lv " .. nextOffer else "")
+	levelText.Text = "Lv " .. s.level .. (if nextOffer and not isTouch then " · upgrade at Lv " .. nextOffer else "")
 	comebackBadge.Visible = s.comeback ~= nil
 	if s.comeback then
-		comebackBadge.Text = string.format("COMEBACK x%.1f", s.comeback.mult)
+		comebackBadge.Text = string.format("COMEBACK XP x%.1f", s.comeback.mult)
 	end
 	if s.alive then
 		deathPanel.Visible = false
 		deathRespawnAt = nil
+		if not tipShown and not camSwitched then
+			tipShown = true
+			local other = if ClientState.camMode == "third" then "top-down" else "third-person"
+			viewTip.Text = if isTouch
+				then `Tip: tap {if ClientState.camMode == "third" then "TOP" else "3RD"} for the {other} view`
+				else `Tip: press V for the {other} view`
+			viewTip.Visible = true
+			task.delay(10, function()
+				viewTip.Visible = false
+			end)
+		end
 	end
 	updateTray(s)
 end
@@ -963,7 +1082,7 @@ function Hud.init(aimTouchActive)
 			elseif info.keepsLevel then string.format("by %s\nYou keep Lv %d · back in the fight in a moment", info.killerName, info.level)
 			else string.format("by %s (Lv %d)\nYou reached Lv %d · Score %s", info.killerName, info.killerLevel, info.level, fmt(info.score))
 		deathRespawnAt = info.respawnAt
-		deathTimer.Text = if info.untilFightEnds then "Watching the fight..." else "" -- D85
+		deathTimer.Text = if info.untilFightEnds then "Watching the fight…" else "" -- D85
 	end)
 	-- Debug command output and other system lines appear in chat.
 	Remotes.Notice.OnClientEvent:Connect(function(message)

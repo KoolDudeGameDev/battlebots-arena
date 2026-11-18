@@ -77,12 +77,15 @@ type View = {
 	rigBody: Instance?,
 	smoke: ParticleEmitter,
 	sparks: ParticleEmitter,
+	burn: { ParticleEmitter }, -- flames and smoke while burning (D88)
+	burnLight: PointLight,
 	conns: { RBXScriptConnection },
 }
 
 local views: { [Model]: View } = {}
 local sawBase: { [Motor6D]: CFrame } = {} -- each saw's resting C0
 local SMASH_HUBS = { "SmashHub" } -- the Sledgehammer main weapon
+local FLAME_PARTS = { "Flame", "FlameCore", "FlameEmbers", "FlameSmoke", "FlameLight" } -- on the Scorcher's Nozzle (D88)
 local SMASH_REST, SMASH_LIFT = math.rad(100), math.rad(130) -- upright in front, then lifted back (D80)
 setmetatable(sawBase :: any, { __mode = "k" }) -- forget saws that were rebuilt
 
@@ -140,6 +143,13 @@ local function refresh(v: View)
 	v.smoke.Enabled = hp > 0 and frac < PRES.smokeBelow
 	v.smoke.Rate = 6 + 18 * (1 - frac / PRES.smokeBelow)
 	v.sparks.Enabled = hp > 0 and frac < PRES.sparksBelow
+
+	-- Burning (D88): set alight by a flamethrower, the Inferno Giant or lava.
+	local burning = m:GetAttribute("Burning") == true
+	for _, e in v.burn do
+		e.Enabled = burning
+	end
+	v.burnLight.Enabled = burning
 
 	local hitRadius = m:GetAttribute("HitRadius") or Config.Robot.HitboxRadius
 	v.hitDisc.Radius = hitRadius
@@ -284,6 +294,51 @@ local function add(model: Instance)
 	sparks.EmissionDirection = Enum.NormalId.Top
 	sparks.Parent = hull
 
+	-- Burning: flames licking up off the hull, thick dark smoke and an orange glow.
+	-- The smoke keeps drifting for a second or two after the fire goes out.
+	local burnAt = Instance.new("Attachment")
+	burnAt.Name = "BurnFx"
+	burnAt.Position = Vector3.new(0, 1, 0)
+	burnAt.Parent = root
+	local burnFire = Instance.new("ParticleEmitter")
+	burnFire.Enabled = false
+	burnFire.Texture = "rbxasset://textures/particles/fire_main.dds"
+	burnFire.Rate = 34
+	burnFire.Lifetime = NumberRange.new(0.45, 0.8)
+	burnFire.Speed = NumberRange.new(3, 6)
+	burnFire.SpreadAngle = Vector2.new(30, 30)
+	burnFire.EmissionDirection = Enum.NormalId.Top
+	burnFire.Acceleration = Vector3.new(0, 5, 0)
+	burnFire.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.2), NumberSequenceKeypoint.new(0.4, 2.4), NumberSequenceKeypoint.new(1, 0.4) })
+	burnFire.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.15), NumberSequenceKeypoint.new(0.7, 0.4), NumberSequenceKeypoint.new(1, 1) })
+	burnFire.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 235, 140)), ColorSequenceKeypoint.new(0.4, Color3.fromRGB(255, 130, 30)), ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 40, 10)) })
+	burnFire.LightEmission = 1
+	burnFire.Rotation = NumberRange.new(0, 360)
+	burnFire.RotSpeed = NumberRange.new(-120, 120)
+	burnFire.Parent = burnAt
+	local burnSmoke = Instance.new("ParticleEmitter")
+	burnSmoke.Enabled = false
+	burnSmoke.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	burnSmoke.Rate = 14
+	burnSmoke.Lifetime = NumberRange.new(1.6, 2.4)
+	burnSmoke.Speed = NumberRange.new(4, 7)
+	burnSmoke.SpreadAngle = Vector2.new(18, 18)
+	burnSmoke.EmissionDirection = Enum.NormalId.Top
+	burnSmoke.Acceleration = Vector3.new(0, 2, 0)
+	burnSmoke.Size = NumberSequence.new(1.5, 5)
+	burnSmoke.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.12, 0.35), NumberSequenceKeypoint.new(1, 1) })
+	burnSmoke.Color = ColorSequence.new(Color3.fromRGB(38, 35, 33), Color3.fromRGB(95, 92, 88))
+	burnSmoke.Rotation = NumberRange.new(0, 360)
+	burnSmoke.RotSpeed = NumberRange.new(-30, 30)
+	burnSmoke.Parent = burnAt
+	local burnLight = Instance.new("PointLight")
+	burnLight.Enabled = false
+	burnLight.Color = Color3.fromRGB(255, 130, 40)
+	burnLight.Range = 10
+	burnLight.Brightness = 2
+	burnLight.Shadows = false
+	burnLight.Parent = burnAt
+
 	local v: View = {
 		model = model,
 		gui = gui,
@@ -321,6 +376,8 @@ local function add(model: Instance)
 		rigBody = nil,
 		smoke = smoke,
 		sparks = sparks,
+		burn = { burnFire, burnSmoke },
+		burnLight = burnLight,
 		conns = {},
 	}
 	views[model] = v
@@ -347,7 +404,7 @@ local function add(model: Instance)
 		v.lastArmor = armor
 		refresh(v)
 	end))
-	for _, attr in { "MaxHP", "MaxArmor", "HitRadius", "AttackRange", "VisualScale", "Pressure", "Marked", "Small" } do
+	for _, attr in { "MaxHP", "MaxArmor", "HitRadius", "AttackRange", "VisualScale", "Pressure", "Marked", "Small", "Burning" } do
 		table.insert(v.conns, model:GetAttributeChangedSignal(attr):Connect(function()
 			refresh(v)
 		end))
@@ -721,11 +778,23 @@ function Robots.init(folder: Folder)
 			end
 			local nozzle = body and body:FindFirstChild("Nozzle")
 			local flame = nozzle and nozzle:FindFirstChild("Flame") :: ParticleEmitter?
-			if flame and flame.Enabled ~= attacking then
-				flame.Enabled = attacking
-				local pilot = (nozzle :: Instance):FindFirstChild("PilotLight") :: ParticleEmitter?
-				if pilot then
-					pilot.Enabled = not attacking -- the pilot flame hides inside the jet
+			if flame and nozzle then
+				if flame.Enabled ~= attacking then
+					-- The jet, its core, embers, smoke and glow all go together (D88).
+					for _, name in FLAME_PARTS do
+						local fx = nozzle:FindFirstChild(name)
+						if fx then
+							(fx :: any).Enabled = attacking
+						end
+					end
+					local pilot = nozzle:FindFirstChild("PilotLight") :: ParticleEmitter?
+					if pilot then
+						pilot.Enabled = not attacking -- the pilot flame hides inside the jet
+					end
+				end
+				local glow = nozzle:FindFirstChild("FlameLight") :: PointLight?
+				if glow and attacking then
+					glow.Brightness = 2.4 + math.random() * 1.4 -- flicker
 				end
 			end
 

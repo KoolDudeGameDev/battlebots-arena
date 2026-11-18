@@ -621,17 +621,32 @@ local function swapTo(name: string, after: (() -> ())?, subtitle: string?)
 	swapping = true
 	local c = Config.Maps.fadeColor[name]
 	Remotes.MapSwap:FireAllClients(Color3.fromRGB(c[1], c[2], c[3]), MapLayouts[name].displayName, subtitle or "")
+	-- Each step runs on its own (D87): one that errors is logged with its line and the
+	-- rest still happen, so a swap never stops half-way with the flow stuck in "swapping"
+	-- and the players who fell to the boss never coming back.
+	local function step(label: string, fn: () -> ())
+		local ok, err = xpcall(fn, debug.traceback)
+		if not ok then
+			warn(`[Bosses] swap to {name}: {label} failed:`, err)
+		end
+	end
 	task.delay(Config.Maps.fade, function()
-		Bosses.stopHazard()
-		Combat.clearAll()
-		Arena.load(name)
-		Pickups.setMode(if Arena.isArena() then "arena" else "overworld")
-		Match.placeEveryone(rng)
-		Match.reviveFallen() -- those who fell to the boss rejoin on the new map (D85)
+		step("stop hazard", Bosses.stopHazard)
+		step("clear shots", Combat.clearAll)
+		step("build map", function()
+			Arena.load(name)
+		end)
+		step("pickups", function()
+			Pickups.setMode(if Arena.isArena() then "arena" else "overworld")
+		end)
+		step("place robots", function()
+			Match.placeEveryone(rng)
+		end)
+		step("revive fallen", Match.reviveFallen) -- those who fell to the boss rejoin on the new map (D85)
 		nextPadAt = 0
 		swapping = false
 		if after then
-			after()
+			step("after", after)
 		end
 	end)
 end
